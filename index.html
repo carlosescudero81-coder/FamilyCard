@@ -257,7 +257,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
 .qty-input{width:76px;flex:none;text-align:center}
 .suggestions{margin-bottom:12px}
 .suggestions-label{font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin-bottom:8px}
-.suggestions-chips{display:flex;flex-wrap:wrap;gap:7px}
+.suggestions-chips{display:flex;flex-wrap:wrap;gap:7px;max-height:120px;overflow-y:auto;-webkit-overflow-scrolling:touch}
 .chip{padding:7px 13px;background:rgba(0,122,255,.08);border:1px solid rgba(0,122,255,.14);border-radius:20px;font-size:14px;font-weight:500;cursor:pointer;transition:all .18s;color:var(--accent)}
 .chip:active{background:var(--accent);color:#fff}
 .cat-row{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:14px}
@@ -1282,7 +1282,7 @@ async function doFinishShop(){
 // ══ HISTORIAL ══
 async function loadHistory(){
   if(!currentFamily||!isOnline)return;
-  const{data}=await sb.from('history').select('*').eq('family_id',currentFamily.id).order('created_at',{ascending:false}).limit(20);
+  const{data}=await sb.from('history').select('*').eq('family_id',currentFamily.id).order('created_at',{ascending:false}).limit(100);
   historyData=data||[];renderHistory();
 }
 function renderHistory(){
@@ -1306,12 +1306,23 @@ async function repeatList(id){
 // ══ SUGERENCIAS ══
 async function loadSuggestions(){
   if(!currentFamily||!isOnline)return[];
-  const{data}=await sb.from('history').select('items_snapshot,created_at').eq('family_id',currentFamily.id).order('created_at',{ascending:false}).limit(10);
+  const{data}=await sb.from('history').select('items_snapshot,created_at').eq('family_id',currentFamily.id).order('created_at',{ascending:false}).limit(100);
   if(!data?.length)return[];
-  const freq={},last={},now=Date.now();
-  data.forEach(h=>{const ns=JSON.parse(h.items_snapshot||'[]'),d=(now-new Date(h.created_at))/86400000;ns.forEach(n=>{freq[n]=(freq[n]||0)+1;if(!last[n]||d<last[n])last[n]=d})});
+  const freq={},last={},qty={},now=Date.now();
+  data.forEach(h=>{const ns=JSON.parse(h.items_snapshot||'[]'),d=(now-new Date(h.created_at))/86400000;ns.forEach(n=>{freq[n]=(freq[n]||0)+1;qty[n]=(qty[n]||0)+1;if(!last[n]||d<last[n])last[n]=d})});
   const cur=items.map(i=>i.name.toLowerCase());
-  return Object.keys(freq).filter(n=>!cur.includes(n.toLowerCase())).map(n=>({n,score:freq[n]*(1/(last[n]+1))})).sort((a,b)=>b.score-a.score).slice(0,8).map(i=>i.n);
+  // Score: frecuencia × recencia × bonus si comprado más de 3 veces
+  // Score de habitualidad:
+  // - frecuencia: cuántas veces se ha comprado (peso principal)
+  // - recencia: penaliza productos que no se compran desde hace tiempo
+  // - bonus escalonado por frecuencia: muy habitual (>10x) → ×2, habitual (>5x) → ×1.5, ocasional (>3x) → ×1.2
+  const habitualityBonus=f=>f>10?2:f>5?1.5:f>3?1.2:1;
+  return Object.keys(freq)
+    .filter(n=>!cur.includes(n.toLowerCase()))
+    .map(n=>({n,score:freq[n]*(1/(last[n]+1))*habitualityBonus(freq[n])}))
+    .sort((a,b)=>b.score-a.score)
+    .slice(0,100)
+    .map(i=>i.n);
 }
 
 // ══ MODALS ══
