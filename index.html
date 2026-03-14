@@ -8,6 +8,13 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="FamilyCart">
 <title>FamilyCart</title>
+<link rel="manifest" id="pwa-manifest">
+<script>
+// Inyectar manifest PWA dinámicamente
+const manifest={name:'FamilyCart',short_name:'FamilyCart',description:'Lista de la compra familiar',start_url:window.location.href,display:'standalone',background_color:'#ffffff',theme_color:'#007aff',orientation:'portrait',icons:[{src:'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="%23007aff"/><text y=".9em" font-size="72" x="14">🛒</text></svg>',sizes:'any',type:'image/svg+xml'}]};
+const blob=new Blob([JSON.stringify(manifest)],{type:'application/json'});
+document.getElementById('pwa-manifest').href=URL.createObjectURL(blob);
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -181,11 +188,49 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
 .empty-chip{padding:9px 16px;background:rgba(0,122,255,0.08);border:1.5px solid rgba(0,122,255,0.18);border-radius:20px;font-size:14px;font-weight:500;cursor:pointer;color:var(--accent);transition:all .18s}
 .empty-chip:active{background:var(--accent);color:#fff}
 
-/* Botón ir a comprar */
-.go-shop-btn{margin:0 20px 10px;padding:15px;background:var(--green);border:none;border-radius:var(--radius-sm);color:#fff;font-family:var(--font);font-size:15px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 4px 14px rgba(52,199,89,0.35);transition:all .18s;flex-shrink:0}
-.go-shop-btn:active{transform:scale(0.98)}
+/* Chip ir a comprar — integrado en topbar */
+.go-shop-chip{display:flex;align-items:center;gap:5px;padding:6px 12px;border-radius:20px;background:rgba(52,199,89,0.12);border:1.5px solid rgba(52,199,89,0.3);color:#1a9e3a;font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;border:none;transition:all .18s;white-space:nowrap}
+.go-shop-chip:active{background:var(--green);color:#fff;transform:scale(0.96)}
+.go-shop-chip svg{width:14px;height:14px}
+.go-shop-chip .chip-badge{background:var(--green);color:#fff;border-radius:10px;padding:1px 6px;font-size:11px;font-weight:700}
 
-/* ══ MODO COMPRADOR ══ */
+/* ══ BUSCADOR ══ */
+.search-bar{padding:8px 20px 0;flex-shrink:0}
+.search-wrap{display:flex;align-items:center;gap:10px;background:var(--white);border:1.5px solid var(--border);border-radius:var(--radius-sm);padding:10px 14px;transition:all .2s;box-shadow:var(--shadow)}
+.search-wrap:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,122,255,.1)}
+.search-wrap svg{width:16px;height:16px;color:var(--muted);flex-shrink:0}
+.search-input{flex:1;border:none;background:none;outline:none;font-family:var(--font);font-size:15px;color:var(--text)}
+.search-input::placeholder{color:var(--muted)}
+.search-clear{width:20px;height:20px;border-radius:50%;background:var(--muted);border:none;color:#fff;font-size:12px;cursor:pointer;display:none;align-items:center;justify-content:center;flex-shrink:0;line-height:1}
+.search-clear.show{display:flex}
+
+/* ══ PLANTILLAS ══ */
+.tpl-item{display:flex;align-items:center;gap:12px;padding:13px 15px;background:var(--white);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px;box-shadow:var(--shadow)}
+.tpl-emoji{font-size:22px;flex-shrink:0}
+.tpl-info{flex:1;min-width:0}
+.tpl-name{font-size:15px;font-weight:600;color:var(--text)}
+.tpl-count{font-size:12px;color:var(--muted);margin-top:1px}
+.tpl-load-btn{padding:7px 14px;border-radius:20px;background:rgba(0,122,255,.1);border:none;color:var(--accent);font-size:13px;font-weight:700;cursor:pointer;font-family:var(--font);flex-shrink:0;transition:all .18s}
+.tpl-load-btn:active{background:var(--accent);color:#fff}
+.tpl-del-btn{width:28px;height:28px;border-radius:8px;background:rgba(255,59,48,.08);border:none;color:var(--red);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.tpl-del-btn svg{width:13px;height:13px}
+.tpl-save-btn{width:100%;padding:13px;border-radius:var(--radius-sm);background:rgba(0,122,255,.08);border:1.5px dashed rgba(0,122,255,.3);color:var(--accent);font-family:var(--font);font-size:14px;font-weight:600;cursor:pointer;transition:all .18s;margin-top:4px}
+.tpl-save-btn:active{background:rgba(0,122,255,.15)}
+/* ══ SELECTOR LISTA COMPRADOR ══ */
+#screen-buyer-pick{background:var(--bg)}
+.buyer-pick-inner{flex:1;overflow-y:auto;padding:0 20px calc(40px + var(--safe-bot))}
+.buyer-pick-title{font-size:24px;font-weight:700;letter-spacing:-0.02em;padding:18px 20px 4px;flex-shrink:0}
+.buyer-pick-sub{font-size:14px;color:var(--muted);padding:0 20px 16px;flex-shrink:0}
+.buyer-list-card{display:flex;align-items:center;gap:14px;background:var(--white);border:1.5px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:10px;cursor:pointer;box-shadow:var(--shadow);transition:all .18s}
+.buyer-list-card:active{transform:scale(0.98)}
+.buyer-list-card-emoji{font-size:28px;flex-shrink:0}
+.buyer-list-card-info{flex:1}
+.buyer-list-card-name{font-size:16px;font-weight:600;color:var(--text)}
+.buyer-list-card-count{font-size:13px;color:var(--muted);margin-top:3px}
+.buyer-list-card-arrow{font-size:18px;color:var(--muted)}
+.buyer-list-card.has-items{border-color:rgba(52,199,89,0.35)}
+.buyer-list-card-badge{background:var(--green);color:#fff;border-radius:10px;padding:2px 8px;font-size:11px;font-weight:700}
+
 #screen-buyer{background:#fff}
 .buyer-header{padding:16px 20px 12px;border-bottom:1px solid var(--border);flex-shrink:0}
 .buyer-title-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
@@ -206,9 +251,15 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
 .shop-check svg{width:14px;height:14px;opacity:0;transition:opacity .2s}
 .shop-item.marking .shop-check svg{opacity:1}
 .shop-item-info{flex:1}
-.shop-item-name{font-size:17px;font-weight:500;color:var(--text)}
-.shop-item-cat{font-size:12px;color:var(--muted);margin-top:2px}
-.shop-item-qty{font-size:13px;color:var(--muted);font-weight:500;flex-shrink:0}
+.shop-item-name{font-size:22px;font-weight:500;color:var(--text)}
+.shop-item-cat{font-size:13px;color:var(--muted);margin-top:2px}
+.shop-item-qty{font-size:16px;color:var(--muted);font-weight:600;flex-shrink:0;background:var(--bg);padding:4px 10px;border-radius:8px}
+/* Tamaño fuente ajustable */
+.buyer-list.font-xl .shop-item-name{font-size:28px}
+.buyer-list.font-xl .shop-item-qty{font-size:20px}
+.buyer-list.font-xl .shop-item{padding:20px 16px}
+.font-toggle{display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;background:rgba(0,0,0,0.05);border:none;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:600;color:var(--muted);transition:all .18s}
+.font-toggle.active{background:rgba(0,122,255,0.1);color:var(--accent)}
 .shop-item.done{animation:shopDone .4s ease forwards}
 @keyframes shopDone{
   0%{opacity:1;transform:scale(1);max-height:100px;margin-bottom:8px;padding:16px}
@@ -411,6 +462,11 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
         <div class="role-badge editor">Edición</div>
       </div>
       <div class="topbar-actions">
+        <button class="go-shop-chip" onclick="goToBuyer()">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
+          Comprar
+          <span class="chip-badge" id="editor-pending-badge" style="display:none">0</span>
+        </button>
         <div class="icon-btn" onclick="goToRole()" title="Cambiar modo">
           <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
         </div>
@@ -423,7 +479,14 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     <!-- Listas -->
     <div class="lists-bar" id="lists-bar"></div>
 
-    <!-- Stats -->
+    <!-- Buscador -->
+    <div class="search-bar">
+      <div class="search-wrap">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" class="search-input" id="search-input" placeholder="Buscar en la lista..." autocomplete="off" oninput="onSearch(this.value)" onsearch="onSearch(this.value)">
+        <button class="search-clear" id="search-clear" onclick="clearSearch()">✕</button>
+      </div>
+    </div>
     <div class="stats-row">
       <div class="stat-card"><div class="stat-num" id="stat-total">0</div><div class="stat-label">Total</div></div>
       <div class="stat-card"><div class="stat-num" id="stat-pending" style="color:var(--accent)">0</div><div class="stat-label">Pendientes</div></div>
@@ -448,13 +511,6 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
       </div>
     </div>
 
-    <!-- Botón ir a comprar -->
-    <button class="go-shop-btn" onclick="goToBuyer()">
-      <svg fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
-      Ir a comprar
-      <span id="editor-pending-badge" style="background:rgba(255,255,255,.25);border-radius:12px;padding:2px 8px;font-size:12px"></span>
-    </button>
-
     <!-- FABs -->
     <div class="fab-group">
       <button class="fab fab-voice" id="fab-voice" onclick="startVoice()">
@@ -471,6 +527,10 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
         <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3" cy="6" r="1" fill="currentColor"/><circle cx="3" cy="12" r="1" fill="currentColor"/><circle cx="3" cy="18" r="1" fill="currentColor"/></svg>
         <span>Productos</span>
       </button>
+      <button class="nav-item" id="editor-nav-templates" onclick="switchEditorTab('templates')">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        <span>Plantillas</span>
+      </button>
       <button class="nav-item" id="editor-nav-history" onclick="switchEditorTab('history')">
         <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
         <span>Historial</span>
@@ -480,6 +540,24 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
         <span>Familia</span>
       </button>
     </nav>
+  </div>
+
+  <!-- ══ SELECTOR LISTA COMPRADOR ══ -->
+  <div class="screen" id="screen-buyer-pick">
+    <div class="topbar">
+      <div class="topbar-left">
+        <div class="topbar-logo">Family<span>Cart</span></div>
+        <div class="role-badge buyer">Comprador</div>
+      </div>
+      <div class="topbar-actions">
+        <div class="icon-btn" onclick="goToRole()">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+        </div>
+      </div>
+    </div>
+    <div class="buyer-pick-title">¿Qué lista vas a comprar?</div>
+    <div class="buyer-pick-sub">Elige la lista y empieza a tachar productos</div>
+    <div class="buyer-pick-inner" id="buyer-pick-list"></div>
   </div>
 
   <!-- ══ COMPRADOR ══ -->
@@ -501,10 +579,16 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
           <div class="buyer-counter" id="buyer-counter">0</div>
           <div class="buyer-counter-sub" id="buyer-counter-sub">productos pendientes</div>
         </div>
-        <button class="buyer-add-btn" onclick="openBuyerAddModal()">
-          <svg fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          Añadir
-        </button>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="font-toggle" id="font-toggle-btn" onclick="toggleBuyerFont()" title="Letra grande">
+            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="14" height="14"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+            Aa
+          </button>
+          <button class="buyer-add-btn" onclick="openBuyerAddModal()">
+            <svg fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Añadir
+          </button>
+        </div>
       </div>
       <div class="buyer-progress-bar"><div class="buyer-progress-fill" id="buyer-progress" style="width:0%"></div></div>
     </div>
@@ -522,7 +606,26 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     </div>
   </div>
 
-  <!-- ══ HISTORIAL (pantalla independiente) ══ -->
+  <!-- ══ PLANTILLAS ══ -->
+  <div class="screen" id="screen-templates">
+    <div class="topbar">
+      <div class="topbar-left"><div class="topbar-logo">Family<span>Cart</span></div></div>
+      <div class="topbar-actions">
+        <div class="icon-btn" onclick="goBackFromTemplates()">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+        </div>
+      </div>
+    </div>
+    <div class="screen-header"><div class="screen-header-title">Plantillas</div></div>
+    <div style="flex:1;overflow-y:auto;padding:0 20px calc(80px + var(--safe-bot))">
+      <p style="font-size:14px;color:var(--muted);margin-bottom:16px;line-height:1.5">Guarda la lista actual como plantilla para reutilizarla en futuras compras.</p>
+      <button class="tpl-save-btn" onclick="saveCurrentAsTemplate()">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="16" height="16" style="vertical-align:middle;margin-right:6px"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+        Guardar lista actual como plantilla
+      </button>
+      <div id="templates-list" style="margin-top:16px"></div>
+    </div>
+  </div>
   <div class="screen" id="screen-history">
     <div class="topbar">
       <div class="topbar-left">
@@ -560,6 +663,18 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
       <div class="section-card" style="margin-bottom:0">
         <p style="font-size:14px;color:var(--muted);line-height:1.6;margin-bottom:14px">Tu familia debe crear una cuenta y usar "Unirme con código" en el registro.</p>
         <button class="btn-secondary" onclick="doLogout()">Cerrar sesión</button>
+      </div>
+      <div class="section-card" style="margin-top:14px">
+        <div class="section-card-title">Notificaciones</div>
+        <p style="font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:12px">Recibe un aviso cuando alguien añada un producto a la lista mientras estás en el supermercado.</p>
+        <button class="btn-secondary" id="notif-btn" onclick="requestNotifPermission()">Activar notificaciones</button>
+        <div id="notif-status" style="font-size:12px;color:var(--muted);margin-top:8px;text-align:center"></div>
+      </div>
+      <div class="section-card" style="margin-top:14px">
+        <div class="section-card-title">Instalar app</div>
+        <p style="font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:12px">Añade FamilyCart a tu pantalla de inicio para acceder sin abrir el navegador.</p>
+        <button class="btn-secondary" id="install-btn" onclick="installPWA()" style="display:none">Añadir a pantalla de inicio</button>
+        <p id="install-hint" style="font-size:12px;color:var(--muted);text-align:center">En Safari: toca <strong>Compartir →</strong> "Añadir a inicio"</p>
       </div>
     </div>
   </div>
@@ -880,10 +995,58 @@ function goToEditor(){
   document.getElementById('invite-code').textContent=currentFamily?.code||'···';
   loadHistory();
 }
-function goToBuyer(){
+async function goToBuyer(){
   currentRole='buyer';
+  // Si solo hay una lista, ir directo
+  if(lists.length<=1){
+    const pending=items.filter(i=>!i.checked);
+    if(!pending.length){toast('La lista está vacía. Añade productos primero.');return;}
+    startBuyerMode();
+    return;
+  }
+  // Varias listas → mostrar selector
+  await renderBuyerPick();
+  showScreen('buyer-pick');
+}
+
+async function renderBuyerPick(){
+  const container=document.getElementById('buyer-pick-list');
+  if(!container)return;
+  // Cargar items de todas las listas para mostrar conteo
+  let allItems=items; // items ya cargados de la lista activa
+  // Intentar obtener conteos de todas las listas
+  let countsByList={};
+  if(isOnline){
+    try{
+      const{data}=await sb.from('items').select('list_id').eq('family_id',currentFamily.id).eq('archived',false).eq('checked',false);
+      if(data){data.forEach(i=>{countsByList[i.list_id]=(countsByList[i.list_id]||0)+1;})}
+    }catch(e){}
+  }
+  // También contar los items locales
+  items.forEach(i=>{if(!i.checked&&!i.archived)countsByList[i.list_id]=(countsByList[i.list_id]||0)+0}); // ya contado arriba
+
+  container.innerHTML=lists.map(l=>{
+    const count=countsByList[l.id]||0;
+    const hasItems=count>0;
+    return`<div class="buyer-list-card${hasItems?' has-items':''}" onclick="pickListAndShop('${l.id}')">
+      <div class="buyer-list-card-emoji">${l.emoji||'🛒'}</div>
+      <div class="buyer-list-card-info">
+        <div class="buyer-list-card-name">${escHtml(l.name)}${hasItems?`<span class="buyer-list-card-badge">${count}</span>`:''}</div>
+        <div class="buyer-list-card-count">${hasItems?count+' productos pendientes':'Lista vacía'}</div>
+      </div>
+      <div class="buyer-list-card-arrow">›</div>
+    </div>`;
+  }).join('');
+}
+
+async function pickListAndShop(listId){
+  // Cambiar a esa lista y empezar compra
+  if(listId!==currentListId){
+    currentListId=listId;
+    await loadItems();
+  }
   const pending=items.filter(i=>!i.checked);
-  if(!pending.length){toast('La lista está vacía. Añade productos primero.');goToEditor();return;}
+  if(!pending.length){toast('Esta lista está vacía');return;}
   startBuyerMode();
 }
 function goBackFromHistory(){goToEditor();document.getElementById('editor-nav-list').click()}
@@ -891,20 +1054,78 @@ function goBackFromFamily(){goToEditor();document.getElementById('editor-nav-lis
 
 // ══ EDITOR TABs ══
 function switchEditorTab(tab){
-  ['list','history','family'].forEach(t=>{
+  ['list','templates','history','family'].forEach(t=>{
     const el=document.getElementById('editor-nav-'+t);
     if(el)el.classList.toggle('active',t===tab);
   });
-  if(tab==='list'){
-    // Permanecer en editor mostrando la lista
-    renderItems();
-  } else if(tab==='history'){
-    showScreen('history');loadHistory();prevScreen='editor';
-  } else if(tab==='family'){
-    document.getElementById('invite-code').textContent=currentFamily?.code||'···';
-    showScreen('family');prevScreen='editor';
-  }
+  if(tab==='list'){showScreen('editor');renderItems();}
+  else if(tab==='templates'){showScreen('templates');renderTemplates();prevScreen='editor';}
+  else if(tab==='history'){showScreen('history');loadHistory();prevScreen='editor';}
+  else if(tab==='family'){document.getElementById('invite-code').textContent=currentFamily?.code||'···';showScreen('family');updateNotifBtn();prevScreen='editor';}
 }
+function goBackFromTemplates(){goToEditor();document.getElementById('editor-nav-list').click()}
+
+// ══ MEJORA 3: FUENTE GRANDE MODO COMPRA ══
+let buyerFontXL=localStorage.getItem('fc_font_xl')==='1';
+function toggleBuyerFont(){buyerFontXL=!buyerFontXL;localStorage.setItem('fc_font_xl',buyerFontXL?'1':'0');applyBuyerFont();}
+function applyBuyerFont(){const l=document.getElementById('buyer-list'),b=document.getElementById('font-toggle-btn');if(!l||!b)return;l.classList.toggle('font-xl',buyerFontXL);b.classList.toggle('active',buyerFontXL);}
+
+// ══ MEJORA 5: BUSCADOR ══
+let searchQuery='';
+function onSearch(val){searchQuery=val.trim().toLowerCase();document.getElementById('search-clear').classList.toggle('show',!!searchQuery);renderItems();}
+function clearSearch(){searchQuery='';const i=document.getElementById('search-input');if(i)i.value='';document.getElementById('search-clear').classList.remove('show');renderItems();}
+
+// ══ MEJORA 6: PLANTILLAS ══
+function getTemplates(){try{return JSON.parse(localStorage.getItem('fc_tpl_'+(currentFamily?.id||''))||'[]')}catch(e){return[]}}
+function saveTemplates(t){localStorage.setItem('fc_tpl_'+(currentFamily?.id||''),JSON.stringify(t))}
+function saveCurrentAsTemplate(){
+  if(!items.length){toast('La lista está vacía');return}
+  const name=prompt('Nombre para la plantilla:','Lista '+new Date().toLocaleDateString('es-ES',{day:'numeric',month:'short'}));
+  if(!name)return;
+  const tpls=getTemplates();
+  tpls.unshift({id:crypto.randomUUID(),name,emoji:'📋',items:items.map(i=>({name:i.name,quantity:i.quantity,category:i.category})),created_at:new Date().toISOString()});
+  saveTemplates(tpls);renderTemplates();toast('Plantilla guardada ✓');
+}
+function renderTemplates(){
+  const list=document.getElementById('templates-list');if(!list)return;
+  const tpls=getTemplates();
+  if(!tpls.length){list.innerHTML='<div class="empty-state" style="padding:32px 0"><div class="empty-icon">📋</div><div class="empty-title">Sin plantillas</div><div class="empty-sub">Guarda tu lista actual para reutilizarla</div></div>';return}
+  list.innerHTML=tpls.map(t=>'<div class="tpl-item"><div class="tpl-emoji">'+t.emoji+'</div><div class="tpl-info"><div class="tpl-name">'+escHtml(t.name)+'</div><div class="tpl-count">'+t.items.length+' productos</div></div><button class="tpl-load-btn" onclick="loadTemplate(\''+t.id+'\')">Cargar</button><button class="tpl-del-btn" onclick="deleteTemplate(\''+t.id+'\')"><svg fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>').join('');
+}
+async function loadTemplate(id){
+  const tpl=getTemplates().find(t=>t.id===id);if(!tpl||!currentListId)return;
+  const cur=items.map(i=>i.name.toLowerCase());
+  const ni=tpl.items.filter(ti=>!cur.includes(ti.name.toLowerCase())).map(ti=>({id:crypto.randomUUID(),family_id:currentFamily.id,list_id:currentListId,name:ti.name,quantity:ti.quantity||null,category:ti.category||guessCat(ti.name),checked:false,archived:false,created_at:new Date().toISOString()}));
+  if(!ni.length){toast('Todos los productos ya están en la lista');return}
+  items.push(...ni);renderItems();goBackFromTemplates();toast(ni.length+' productos añadidos ✓');
+  if(isOnline){try{await sb.from('items').insert(ni)}catch(e){await sb.from('items').insert(ni.map(i=>({...i,list_id:undefined}))).catch(()=>{})}}
+}
+function deleteTemplate(id){saveTemplates(getTemplates().filter(t=>t.id!==id));renderTemplates();toast('Plantilla eliminada')}
+
+// ══ MEJORA 8: NOTIFICACIONES PUSH ══
+function updateNotifBtn(){
+  const btn=document.getElementById('notif-btn'),st=document.getElementById('notif-status');if(!btn||!st)return;
+  if(!('Notification' in window)){btn.style.display='none';st.textContent='Navegador no soporta notificaciones';return}
+  if(Notification.permission==='granted'){btn.textContent='✓ Activas';btn.style.cssText='background:rgba(52,199,89,.1);color:#1a9e3a';st.textContent='Recibirás avisos cuando alguien añada productos';}
+  else if(Notification.permission==='denied'){btn.textContent='Bloqueadas';btn.disabled=true;st.textContent='Actívalas en ajustes del navegador';}
+  else{btn.textContent='Activar notificaciones';}
+}
+async function requestNotifPermission(){
+  if(!('Notification' in window)){toast('No disponible en este navegador');return}
+  const p=await Notification.requestPermission();updateNotifBtn();
+  if(p==='granted'){toast('Notificaciones activadas 🔔');new Notification('FamilyCart',{body:'Te avisaremos cuando alguien añada productos'});}
+  else toast('Permiso denegado — actívalo en ajustes del navegador');
+}
+function sendRemoteNotif(name,who){
+  if(Notification.permission!=='granted'||document.visibilityState!=='hidden')return;
+  new Notification(who+' añadió a la lista',{body:name,tag:'fc-add',renotify:true});
+}
+
+// ══ MEJORA 9: PWA ══
+let deferredInstall=null;
+window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredInstall=e;const b=document.getElementById('install-btn'),h=document.getElementById('install-hint');if(b)b.style.display='block';if(h)h.style.display='none';});
+async function installPWA(){if(!deferredInstall)return;deferredInstall.prompt();const{outcome}=await deferredInstall.userChoice;if(outcome==='accepted'){toast('FamilyCart instalada 🎉');deferredInstall=null;const b=document.getElementById('install-btn');if(b)b.style.display='none';}}
+window.addEventListener('appinstalled',()=>toast('App instalada en tu pantalla de inicio ✓'));
 
 // ══ LISTAS MÚLTIPLES ══
 async function loadLists(){await ensureDefaultList();}
@@ -977,13 +1198,17 @@ async function loadItems(){
 function updateBadges(){
   const pending=items.filter(i=>!i.checked).length;
   const badge=document.getElementById('editor-pending-badge');
-  if(badge)badge.textContent=pending>0?`${pending} pendientes`:'lista vacía';
+  if(badge){
+    if(pending>0){badge.textContent=pending;badge.style.display='inline-block';}
+    else badge.style.display='none';
+  }
 }
 
 // ══ RENDER ITEMS (modo editor) ══
 function renderItems(){
   const area=document.getElementById('list-area'),empty=document.getElementById('empty-state');
-  const pending=items.filter(i=>!i.checked),done=items.filter(i=>i.checked);
+  const filtered=searchQuery?items.filter(i=>i.name.toLowerCase().includes(searchQuery)):items;
+  const pending=filtered.filter(i=>!i.checked),done=filtered.filter(i=>i.checked);
   document.getElementById('stat-total').textContent=items.length;
   document.getElementById('stat-pending').textContent=pending.length;
   document.getElementById('stat-done').textContent=done.length;
@@ -1163,6 +1388,7 @@ function startBuyerMode(){
   shopItems=items.filter(i=>!i.checked).sort((a,b)=>(CATS[a.category||'otros']?.aisle||9)-(CATS[b.category||'otros']?.aisle||9)).map(i=>({...i,_done:false}));
   renderBuyerList();
   showScreen('buyer');
+  applyBuyerFont();
 }
 
 function renderBuyerList(){
