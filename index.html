@@ -1603,13 +1603,18 @@ function injectBuyerItem(item){
 function markBuyerItem(id,el){
   const item=shopItems.find(i=>i.id===id);if(!item||item._done)return;
   el.classList.add('marking');
-  setTimeout(()=>{
+  setTimeout(async()=>{
     el.classList.add('done');item._done=true;
-    toggleItem(id);
+
+    // ARCHIVAR DIRECTAMENTE en BD al tapar — no esperar a "Finalizar"
+    items=items.filter(i=>i.id!==id);
+    if(isOnline){
+      await sb.from('items').update({archived:true,checked:true}).eq('id',id).catch(()=>{});
+    }
+
     updateBuyerCounter();
     setTimeout(()=>{
       el.remove();
-      // Limpiar etiqueta de pasillo si quedó sola
       const list=document.getElementById('buyer-list');
       Array.from(list.querySelectorAll('.aisle-label')).forEach(lbl=>{
         const next=lbl.nextElementSibling;
@@ -1644,10 +1649,6 @@ function closeConfirm(){document.getElementById('confirm-finish').classList.remo
 async function doFinishShop(){
   closeConfirm();
 
-  // DEBUG: mostrar estado real
-  const debugMsg = `shopItems:${shopItems.length} done:${shopItems.filter(i=>i._done).length} items:${items.length} checked:${items.filter(i=>i.checked).length}`;
-  alert('DEBUG: ' + debugMsg);
-
   // Usar shopItems._done como fuente de verdad (no items.checked que puede estar desincronizado)
   const toArchive=shopItems.filter(i=>i._done);
   const doneIds=toArchive.map(i=>i.id);
@@ -1655,7 +1656,6 @@ async function doFinishShop(){
   if(doneIds.length&&isOnline){
     // Archivar en BD
     const {error} = await sb.from('items').update({archived:true,checked:true}).in('id',doneIds);
-    alert('Archive result - error: ' + JSON.stringify(error) + ' doneIds: ' + doneIds.length);
     if(!error){
       const activeList=lists.find(l=>l.id===currentListId);
       await sb.from('history').insert({
