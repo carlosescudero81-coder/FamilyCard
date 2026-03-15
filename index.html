@@ -838,7 +838,16 @@ function avatarColor(uid){if(!uid)return'#8e8e93';let h=0;for(let i=0;i<uid.leng
 function avatarInitial(email){return email?email[0].toUpperCase():'?'}
 
 // ══ INDEXEDDB ══
-function openDB(){return new Promise((res,rej)=>{const req=indexedDB.open('familycart_v6',1);req.onupgradeneeded=e=>{const d=e.target.result;['items','pending','lists'].forEach(s=>{if(!d.objectStoreNames.contains(s))d.createObjectStore(s,{keyPath:'id',autoIncrement:s==='pending'})});};req.onsuccess=e=>{db=e.target.result;res()};req.onerror=()=>res()})}
+function openDB(){
+  // Limpiar bases de datos antiguas que causan datos sucios
+  ['familycart','familycart_v1','familycart_v2','familycart_v3','familycart_v4','familycart_v5'].forEach(n=>{try{indexedDB.deleteDatabase(n)}catch(e){}});
+  return new Promise((res)=>{
+    const req=indexedDB.open('familycart_v7',1);
+    req.onupgradeneeded=e=>{const d=e.target.result;['items','pending','lists'].forEach(s=>{if(!d.objectStoreNames.contains(s))d.createObjectStore(s,{keyPath:'id',autoIncrement:s==='pending'})})};
+    req.onsuccess=e=>{db=e.target.result;res()};
+    req.onerror=()=>res();
+  });
+}
 async function cacheItems(data){if(!db)return;const tx=db.transaction('items','readwrite');const s=tx.objectStore('items');s.clear();data.forEach(i=>s.put(i))}
 async function getCachedItems(){if(!db)return[];return new Promise(res=>{const r=db.transaction('items','readonly').objectStore('items').getAll();r.onsuccess=()=>res(r.result||[]);r.onerror=()=>res([])})}
 async function queuePending(a){if(!db)return;db.transaction('pending','readwrite').objectStore('pending').add(a)}
@@ -1299,13 +1308,17 @@ async function loadItems(){
       if(!error&&data){
         items=data;
         await cacheItems(data);
+      } else {
+        // list_id no existe en tabla → cargar sin filtro de lista
+        const r=await sb.from('items').select('*')
+          .eq('family_id',currentFamily.id)
+          .eq('archived',false)
+          .order('created_at',{ascending:true});
+        if(!r.error&&r.data){items=r.data;await cacheItems(r.data)}
       }
     }catch(e){
-      // Solo usar caché si falla la red
-      items=await getCachedItems();
+      console.warn('loadItems error',e);
     }
-  } else {
-    items=await getCachedItems();
   }
   renderItems();updateBadges();
 }
@@ -1514,7 +1527,7 @@ function subscribeRealtime(){
           // Nada que hacer en UI pero el conteo del rol se actualizará al volver
         }
       }
-      if(p.eventType==='UPDATE'){if(p.new.archived){items=items.filter(i=>i.id!==p.new.id);renderItems();}else{const idx=items.findIndex(i=>i.id===p.new.id);if(idx>=0){items[idx]=p.new;renderItems()}}}
+      if(p.eventType==='UPDATE'){const idx=items.findIndex(i=>i.id===p.new.id);if(idx>=0){items[idx]=p.new;renderItems()}}
       if(p.eventType==='DELETE'){
         items=items.filter(i=>i.id!==p.old.id);renderItems();
         if(inBuyer){
@@ -1654,20 +1667,12 @@ async function doFinishShop(){
     }).catch(()=>{});
   }
 
-  // Limpiar estado local inmediatamente
+  // Limpiar estado local
   items=items.filter(i=>!doneIds.includes(i.id));
-  items=items.map(i=>({...i,checked:false}));
   shopItems=[];
-
-  // Resetear checked en BD para los que quedaron sin comprar
-  const pendingIds=items.map(i=>i.id);
-  if(pendingIds.length&&isOnline){
-    await sb.from('items').update({checked:false}).in('id',pendingIds).catch(()=>{});
-  }
 
   renderItems();
   loadHistory();
-  await loadItems(); // recarga limpia desde BD
   toast('¡Compra terminada! 🛍️');
   if(navigator.vibrate)navigator.vibrate([50,30,50,30,100]);
   goToEditor();
