@@ -1288,7 +1288,7 @@ async function createNewList(){
 // ══ ITEMS ══
 async function loadItems(){
   if(!currentFamily||!currentListId)return;
-  items=[];
+  items=[];// ← limpiar siempre antes de cargar
   if(isOnline){
     try{
       const{data,error}=await sb.from('items').select('*')
@@ -1301,6 +1301,7 @@ async function loadItems(){
         await cacheItems(data);
       }
     }catch(e){
+      // Solo usar caché si falla la red
       items=await getCachedItems();
     }
   } else {
@@ -1513,7 +1514,7 @@ function subscribeRealtime(){
           // Nada que hacer en UI pero el conteo del rol se actualizará al volver
         }
       }
-      if(p.eventType==='UPDATE'){const idx=items.findIndex(i=>i.id===p.new.id);if(idx>=0){items[idx]=p.new;renderItems()}}
+      if(p.eventType==='UPDATE'){if(p.new.archived){items=items.filter(i=>i.id!==p.new.id);renderItems();}else{const idx=items.findIndex(i=>i.id===p.new.id);if(idx>=0){items[idx]=p.new;renderItems()}}}
       if(p.eventType==='DELETE'){
         items=items.filter(i=>i.id!==p.old.id);renderItems();
         if(inBuyer){
@@ -1655,11 +1656,10 @@ async function doFinishShop(){
 
   // Limpiar estado local inmediatamente
   items=items.filter(i=>!doneIds.includes(i.id));
-  // Resetear checked de los que quedaron sin comprar
   items=items.map(i=>({...i,checked:false}));
   shopItems=[];
 
-  // Sincronizar checked:false en BD para los que quedaron
+  // Resetear checked en BD para los que quedaron sin comprar
   const pendingIds=items.map(i=>i.id);
   if(pendingIds.length&&isOnline){
     await sb.from('items').update({checked:false}).in('id',pendingIds).catch(()=>{});
@@ -1667,8 +1667,7 @@ async function doFinishShop(){
 
   renderItems();
   loadHistory();
-  // Recargar desde BD para garantizar estado limpio
-  await loadItems();
+  await loadItems(); // recarga limpia desde BD
   toast('¡Compra terminada! 🛍️');
   if(navigator.vibrate)navigator.vibrate([50,30,50,30,100]);
   goToEditor();
