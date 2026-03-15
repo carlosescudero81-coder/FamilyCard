@@ -1288,7 +1288,7 @@ async function createNewList(){
 // ══ ITEMS ══
 async function loadItems(){
   if(!currentFamily||!currentListId)return;
-  items=[];// ← limpiar siempre antes de cargar
+  items=[];
   if(isOnline){
     try{
       const{data,error}=await sb.from('items').select('*')
@@ -1299,16 +1299,8 @@ async function loadItems(){
       if(!error&&data){
         items=data;
         await cacheItems(data);
-      } else {
-        // list_id no existe en tabla → cargar sin filtro de lista
-        const r=await sb.from('items').select('*')
-          .eq('family_id',currentFamily.id)
-          .eq('archived',false)
-          .order('created_at',{ascending:true});
-        if(!r.error&&r.data){items=r.data;await cacheItems(r.data)}
       }
     }catch(e){
-      // Solo usar caché si falla la red
       items=await getCachedItems();
     }
   } else {
@@ -1661,19 +1653,22 @@ async function doFinishShop(){
     }).catch(()=>{});
   }
 
-  // Resetear checked de items no archivados (los que no se compraron)
-  const pendingIds=items.filter(i=>!i.checked).map(i=>i.id);
+  // Limpiar estado local inmediatamente
+  items=items.filter(i=>!doneIds.includes(i.id));
+  // Resetear checked de los que quedaron sin comprar
+  items=items.map(i=>({...i,checked:false}));
+  shopItems=[];
+
+  // Sincronizar checked:false en BD para los que quedaron
+  const pendingIds=items.map(i=>i.id);
   if(pendingIds.length&&isOnline){
     await sb.from('items').update({checked:false}).in('id',pendingIds).catch(()=>{});
   }
 
-  // Limpiar estado local
-  items=items.filter(i=>!doneIds.includes(i.id));
-  items=items.map(i=>({...i,checked:false}));
-  shopItems=[];
-
   renderItems();
   loadHistory();
+  // Recargar desde BD para garantizar estado limpio
+  await loadItems();
   toast('¡Compra terminada! 🛍️');
   if(navigator.vibrate)navigator.vibrate([50,30,50,30,100]);
   goToEditor();
