@@ -1096,10 +1096,12 @@ function setRole(role){
 function goToRole(){showRoleScreen();}
 function goToEditor(){
   currentRole='editor';
+  // Si salimos del modo compra con items comprados, guardar historial
+  if(sessionBought.length>0)saveSessionToHistory();
   renderListsPills();
   showScreen('editor');
   document.getElementById('invite-code').textContent=currentFamily?.code||'···';
-  loadItems(); // siempre refresca desde BD al volver al editor
+  loadItems();
   loadHistory();
 }
 async function goToBuyer(){
@@ -1566,6 +1568,7 @@ function subscribeRealtime(){
 
 // ══ MODO COMPRADOR ══
 function startBuyerMode(){
+  sessionBought=[]; // reset para nueva sesión de compra
   shopItems=items.filter(i=>!i.checked).sort((a,b)=>(CATS[a.category||'otros']?.aisle||9)-(CATS[b.category||'otros']?.aisle||9)).map(i=>({...i,_done:false}));
   renderBuyerList();
   showScreen('buyer');
@@ -1632,16 +1635,22 @@ function injectBuyerItem(item){
   updateBuyerCounter();
 }
 
+// Acumula items comprados en esta sesión para guardar en historial
+let sessionBought=[];
+
 function markBuyerItem(id,el){
   const item=shopItems.find(i=>i.id===id);if(!item||item._done)return;
   el.classList.add('marking');
   
-  // BORRAR de BD inmediatamente — la forma más simple y fiable
+  // Acumular para historial ANTES de borrar
+  sessionBought.push({name:item.name,quantity:item.quantity,category:item.category});
+
+  // BORRAR de BD inmediatamente
   sb.from('items').delete().eq('id',id).then(({error})=>{
     if(error) console.error('Delete error:',error);
   });
   
-  // Quitar del estado local inmediatamente
+  // Quitar del estado local
   items=items.filter(i=>i.id!==id);
   item._done=true;
 
@@ -1655,11 +1664,29 @@ function markBuyerItem(id,el){
         const next=lbl.nextElementSibling;
         if(!next||next.id==='buyer-done')lbl.remove();
       });
+      // Cuando no quedan items → guardar historial automáticamente
       if(!shopItems.filter(i=>!i._done).length){
         document.getElementById('buyer-done').classList.add('visible');
+        saveSessionToHistory();
       }
     },420);
   },150);
+}
+
+async function saveSessionToHistory(){
+  if(!sessionBought.length||!currentFamily||!isOnline)return;
+  const snapshot=JSON.stringify(sessionBought);
+  const activeList=lists.find(l=>l.id===currentListId);
+  await sb.from('history').insert({
+    family_id:currentFamily.id,
+    list_id:currentListId||null,
+    list_name:activeList?.name||'Lista',
+    item_count:sessionBought.length,
+    items_snapshot:snapshot,
+    created_at:new Date().toISOString()
+  }).catch(e=>console.error('History save error:',e));
+  sessionBought=[];
+  loadHistory();
 }
 
 function updateBuyerCounter(){
@@ -1770,7 +1797,7 @@ async function loadSuggestions(){
   const{data}=await sb.from('history').select('items_snapshot,created_at').eq('family_id',currentFamily.id).order('created_at',{ascending:false}).limit(100);
   if(!data?.length)return[];
   const freq={},last={},qty={},now=Date.now();
-  data.forEach(h=>{const ns=JSON.parse(h.items_snapshot||'[]'),d=(now-new Date(h.created_at))/86400000;ns.forEach(n=>{freq[n]=(freq[n]||0)+1;qty[n]=(qty[n]||0)+1;if(!last[n]||d<last[n])last[n]=d})});
+  data.forEach(h=>{const raw=JSON.parse(h.items_snapshot||'[]'),d=(now-new Date(h.created_at))/86400000;raw.forEach(r=>{const n=typeof r==='string'?r:r.name;if(!n)return;freq[n]=(freq[n]||0)+1;if(!last[n]||d<last[n])last[n]=d;if(typeof r==='object'&&r.quantity&&!qty[n])qty[n]=r.quantity;})});
   const cur=items.map(i=>i.name.toLowerCase());
   // Score: frecuencia × recencia × bonus si comprado más de 3 veces
   // Score de habitualidad:
