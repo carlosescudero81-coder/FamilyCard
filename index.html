@@ -1603,15 +1603,18 @@ function injectBuyerItem(item){
 function markBuyerItem(id,el){
   const item=shopItems.find(i=>i.id===id);if(!item||item._done)return;
   el.classList.add('marking');
-  setTimeout(async()=>{
-    el.classList.add('done');item._done=true;
+  
+  // BORRAR de BD inmediatamente — la forma más simple y fiable
+  sb.from('items').delete().eq('id',id).then(({error})=>{
+    if(error) console.error('Delete error:',error);
+  });
+  
+  // Quitar del estado local inmediatamente
+  items=items.filter(i=>i.id!==id);
+  item._done=true;
 
-    // ARCHIVAR DIRECTAMENTE en BD al tapar — no esperar a "Finalizar"
-    items=items.filter(i=>i.id!==id);
-    if(isOnline){
-      await sb.from('items').update({archived:true,checked:true}).eq('id',id).catch(()=>{});
-    }
-
+  setTimeout(()=>{
+    el.classList.add('done');
     updateBuyerCounter();
     setTimeout(()=>{
       el.remove();
