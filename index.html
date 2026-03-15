@@ -838,16 +838,7 @@ function avatarColor(uid){if(!uid)return'#8e8e93';let h=0;for(let i=0;i<uid.leng
 function avatarInitial(email){return email?email[0].toUpperCase():'?'}
 
 // ══ INDEXEDDB ══
-function openDB(){
-  // Limpiar bases de datos antiguas que causan datos sucios
-  ['familycart','familycart_v1','familycart_v2','familycart_v3','familycart_v4','familycart_v5'].forEach(n=>{try{indexedDB.deleteDatabase(n)}catch(e){}});
-  return new Promise((res)=>{
-    const req=indexedDB.open('familycart_v7',1);
-    req.onupgradeneeded=e=>{const d=e.target.result;['items','pending','lists'].forEach(s=>{if(!d.objectStoreNames.contains(s))d.createObjectStore(s,{keyPath:'id',autoIncrement:s==='pending'})})};
-    req.onsuccess=e=>{db=e.target.result;res()};
-    req.onerror=()=>res();
-  });
-}
+function openDB(){return new Promise((res,rej)=>{const req=indexedDB.open('familycart_v6',1);req.onupgradeneeded=e=>{const d=e.target.result;['items','pending','lists'].forEach(s=>{if(!d.objectStoreNames.contains(s))d.createObjectStore(s,{keyPath:'id',autoIncrement:s==='pending'})});};req.onsuccess=e=>{db=e.target.result;res()};req.onerror=()=>res()})}
 async function cacheItems(data){if(!db)return;const tx=db.transaction('items','readwrite');const s=tx.objectStore('items');s.clear();data.forEach(i=>s.put(i))}
 async function getCachedItems(){if(!db)return[];return new Promise(res=>{const r=db.transaction('items','readonly').objectStore('items').getAll();r.onsuccess=()=>res(r.result||[]);r.onerror=()=>res([])})}
 async function queuePending(a){if(!db)return;db.transaction('pending','readwrite').objectStore('pending').add(a)}
@@ -1317,8 +1308,11 @@ async function loadItems(){
         if(!r.error&&r.data){items=r.data;await cacheItems(r.data)}
       }
     }catch(e){
-      console.warn('loadItems error',e);
+      // Solo usar caché si falla la red
+      items=await getCachedItems();
     }
+  } else {
+    items=await getCachedItems();
   }
   renderItems();updateBadges();
 }
@@ -1650,27 +1644,42 @@ function closeConfirm(){document.getElementById('confirm-finish').classList.remo
 async function doFinishShop(){
   closeConfirm();
 
-  // Archivar TODOS los items checked en la lista activa (no solo los marcados en esta sesión)
-  const toArchive=items.filter(i=>i.checked);
+  // Usar shopItems._done como fuente de verdad (no items.checked que puede estar desincronizado)
+  const toArchive=shopItems.filter(i=>i._done);
   const doneIds=toArchive.map(i=>i.id);
 
   if(doneIds.length&&isOnline){
-    await sb.from('items').update({archived:true}).in('id',doneIds).catch(()=>{});
-    const activeList=lists.find(l=>l.id===currentListId);
-    await sb.from('history').insert({
-      family_id:currentFamily.id,
-      list_id:currentListId,
-      list_name:activeList?.name||'Lista',
-      item_count:doneIds.length,
-      items_snapshot:JSON.stringify(toArchive.map(i=>({name:i.name,quantity:i.quantity,category:i.category}))),
-      created_at:new Date().toISOString()
-    }).catch(()=>{});
+    // Archivar en BD
+    const {error} = await sb.from('items').update({archived:true,checked:true}).in('id',doneIds);
+    if(!error){
+      const activeList=lists.find(l=>l.id===currentListId);
+      await sb.from('history').insert({
+        family_id:currentFamily.id,
+        list_id:currentListId,
+        list_name:activeList?.name||'Lista',
+        item_count:doneIds.length,
+        items_snapshot:JSON.stringify(toArchive.map(i=>({name:i.name,quantity:i.quantity,category:i.category}))),
+        created_at:new Date().toISOString()
+      }).catch(()=>{});
+    }
+  } else if(doneIds.length){
+    // Offline: marcar como archivados en caché local
+    doneIds.forEach(id=>{const i=items.find(x=>x.id===id);if(i){i.archived=true;i.checked=true;}});
+  }
+
+  // Resetear checked de los que NO se compraron
+  const pendingIds=shopItems.filter(i=>!i._done).map(i=>i.id);
+  if(pendingIds.length&&isOnline){
+    await sb.from('items').update({checked:false}).in('id',pendingIds).catch(()=>{});
   }
 
   // Limpiar estado local
   items=items.filter(i=>!doneIds.includes(i.id));
+  items=items.map(i=>({...i,checked:false}));
   shopItems=[];
 
+  // Recargar desde BD para garantizar estado limpio
+  await loadItems();
   renderItems();
   loadHistory();
   toast('¡Compra terminada! 🛍️');
