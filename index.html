@@ -151,6 +151,10 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
 .item.checked .item-name{text-decoration:line-through;color:var(--muted)}
 .item-meta{display:flex;align-items:center;gap:5px;margin-top:2px}
 .item-qty{font-size:11px;color:var(--muted);background:var(--bg);border-radius:5px;padding:2px 6px;font-weight:500}
+.item-qty-wrap{display:flex;align-items:center;gap:2px;flex-shrink:0}
+.qty-btn{width:26px;height:26px;border:none;background:rgba(0,122,255,.08);border-radius:7px;font-size:16px;font-weight:700;color:var(--accent);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s;flex-shrink:0;line-height:1}
+.qty-btn:active{background:rgba(0,122,255,.2);transform:scale(0.88)}
+.qty-num{min-width:22px;text-align:center;font-size:13px;font-weight:700;color:var(--text)}
 .item-cat{font-size:12px}
 .item-avatar{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;flex-shrink:0}
 
@@ -1217,8 +1221,19 @@ async function requestNotifPermission(){
   else toast('Permiso denegado — actívalo en ajustes del navegador');
 }
 function sendRemoteNotif(name,who){
-  if(Notification.permission!=='granted'||document.visibilityState!=='hidden')return;
-  new Notification(who+' añadió a la lista',{body:name,tag:'fc-add',renotify:true});
+  if(Notification.permission!=='granted')return;
+  // Show even if app is visible
+  const n=new Notification('🛒 '+who+' añadió un producto',{
+    body:name,
+    tag:'fc-add',
+    renotify:true,
+    icon:'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🛒</text></svg>',
+    badge:'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🛒</text></svg>'
+  });
+  // Auto close after 4s
+  setTimeout(()=>n.close(),4000);
+  // Vibrate on mobile
+  if(navigator.vibrate)navigator.vibrate([100,50,100]);
 }
 
 // ══ MEJORA 9: PWA ══
@@ -1357,10 +1372,15 @@ function renderItems(){
         <div class="item-info">
           <div class="item-name">${escHtml(item.name)}</div>
           <div class="item-meta">
-            ${item.quantity?`<div class="item-qty">${escHtml(item.quantity)}</div>`:''}
             <div class="item-cat">${cat?.icon||'📦'}</div>
           </div>
-        </div>${av}`;
+        </div>
+        <div class="item-qty-wrap" onclick="event.stopPropagation()">
+          <button class="qty-btn" onclick="changeQty('${item.id}',event,-1)">−</button>
+          <span class="qty-num" id="qn-${item.id}">${escHtml(item.quantity||'')}</span>
+          <button class="qty-btn" onclick="changeQty('${item.id}',event,1)">+</button>
+        </div>
+        ${av}`;
       el.addEventListener('click',()=>toggleItem(item.id));
       setupLongPress(el,()=>openEditModal(item));
       setupSwipe(wrap,el,bg,item.id);
@@ -1435,6 +1455,18 @@ async function addItemFromBuyer(){
   ni.value='';qi.value='';closeBuyerAddModal();
   toast(`${name} añadido ✓`);if(navigator.vibrate)navigator.vibrate(20);
   if(isOnline){try{await sb.from('items').insert(item)}catch(e){await sb.from('items').insert({...item,list_id:undefined,added_by:undefined,added_by_email:undefined}).catch(()=>{})}}
+}
+
+async function changeQty(id,e,delta){
+  if(e)e.stopPropagation();
+  const item=items.find(i=>i.id===id);if(!item)return;
+  const current=parseInt(item.quantity)||1;
+  const next=Math.max(1,current+delta);
+  item.quantity=String(next);
+  const el=document.getElementById('qn-'+id);
+  if(el)el.textContent=next;
+  if(navigator.vibrate)navigator.vibrate(8);
+  if(isOnline)await sb.from('items').update({quantity:item.quantity}).eq('id',id).catch(()=>{});
 }
 
 async function toggleItem(id){
