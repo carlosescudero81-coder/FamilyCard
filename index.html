@@ -11,7 +11,7 @@
 <link rel="manifest" id="pwa-manifest">
 <script>
 // Inyectar manifest PWA dinámicamente
-const manifest={name:'FamilyCart',short_name:'FamilyCart',description:'Lista de la compra familiar',start_url:window.location.href,display:'standalone',background_color:'#ffffff',theme_color:'#007aff',orientation:'portrait',icons:[{src:'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="%23007aff"/><text y=".9em" font-size="72" x="14">🛒</text></svg>',sizes:'any',type:'image/svg+xml'}]};
+const manifest={name:'FamilyCart',short_name:'FamilyCart',description:'Lista de la compra familiar',start_url:window.location.origin+window.location.pathname,display:'standalone',background_color:'#ffffff',theme_color:'#007aff',orientation:'portrait',icons:[{src:'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="%23007aff"/><text y=".9em" font-size="72" x="14">🛒</text></svg>',sizes:'any',type:'image/svg+xml'}]};
 const blob=new Blob([JSON.stringify(manifest)],{type:'application/json'});
 document.getElementById('pwa-manifest').href=URL.createObjectURL(blob);
 </script>
@@ -433,12 +433,18 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     <div class="role-card">
       <div class="role-greeting" id="role-greeting">Bienvenido 👋</div>
       <div class="role-title" id="role-family-name">Mi Familia</div>
-      <div class="role-sub">¿Qué vas a hacer ahora?</div>
+
+      <!-- Resumen de listas activas -->
+      <div id="role-lists-summary" style="margin-bottom:20px;display:none">
+        <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Listas activas</div>
+        <div id="role-lists-pills" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+      </div>
+
       <button class="role-btn editor" onclick="setRole('editor')">
         <div class="role-icon blue">✏️</div>
         <div class="role-info">
           <div class="role-btn-title">Gestionar la lista</div>
-          <div class="role-btn-sub">Añadir, editar o borrar productos. Preparar la compra.</div>
+          <div class="role-btn-sub" id="role-editor-sub">Añadir, editar o borrar productos.</div>
         </div>
         <div class="role-arrow">›</div>
       </button>
@@ -446,7 +452,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
         <div class="role-icon green">🛒</div>
         <div class="role-info">
           <div class="role-btn-title">Ir a comprar</div>
-          <div class="role-btn-sub">Marca los productos según los vas cogiendo del supermercado.</div>
+          <div class="role-btn-sub" id="role-buyer-sub">Marca los productos según los vas cogiendo.</div>
         </div>
         <div class="role-arrow">›</div>
       </button>
@@ -836,22 +842,73 @@ function openDB(){return new Promise((res,rej)=>{const req=indexedDB.open('famil
 async function cacheItems(data){if(!db)return;const tx=db.transaction('items','readwrite');const s=tx.objectStore('items');s.clear();data.forEach(i=>s.put(i))}
 async function getCachedItems(){if(!db)return[];return new Promise(res=>{const r=db.transaction('items','readonly').objectStore('items').getAll();r.onsuccess=()=>res(r.result||[]);r.onerror=()=>res([])})}
 async function queuePending(a){if(!db)return;db.transaction('pending','readwrite').objectStore('pending').add(a)}
-async function flushPending(){if(!db||!isOnline)return;const r=db.transaction('pending','readwrite').objectStore('pending');const all=await new Promise(res=>{const q=r.getAll();q.onsuccess=()=>res(q.result)});for(const a of all){try{if(a.type==='add')await sb.from('items').insert(a.payload).catch(()=>sb.from('items').insert({...a.payload,list_id:undefined,added_by:undefined,added_by_email:undefined}));if(a.type==='del')await sb.from('items').delete().eq('id',a.id);if(a.type==='toggle')await sb.from('items').update({checked:a.checked}).eq('id',a.id);r.delete(a.id)}catch(e){}}}
+async function flushPending(){if(!db||!isOnline)return;const r=db.transaction('pending','readwrite').objectStore('pending');const all=await new Promise(res=>{const q=r.getAll();q.onsuccess=()=>res(q.result)});for(const a of all){try{if(a.type==='add')await sb.from('items').insert(a.payload).catch(()=>sb.from('items').insert({...a.payload,list_id:undefined,added_by:undefined,added_by_email:undefined}));if(a.type==='del')await sb.from('items').delete().eq('id',a.payload?.id||a.id);if(a.type==='toggle')await sb.from('items').update({checked:a.checked}).eq('id',a.id);r.delete(a.id)}catch(e){}}}
 
-window.addEventListener('online',()=>{isOnline=true;document.getElementById('offline-banner').classList.remove('show');flushPending();loadItems()});
+window.addEventListener('online',async()=>{
+  isOnline=true;
+  document.getElementById('offline-banner').classList.remove('show');
+  // Si teníamos una lista virtual (offline), intentar crearla en Supabase
+  if(currentListId&&currentListId.startsWith('default-')&&currentFamily){
+    try{
+      const existing=lists.find(l=>l.id===currentListId);
+      if(existing){
+        const{data:ins}=await sb.from('lists').insert({
+          id:crypto.randomUUID(),
+          family_id:currentFamily.id,
+          name:existing.name,
+          emoji:existing.emoji||'🛒',
+          created_at:existing.created_at||new Date().toISOString()
+        }).select().single();
+        if(ins){
+          // Actualizar ID local y en los items pendientes
+          const oldId=currentListId;
+          currentListId=ins.id;
+          lists=lists.map(l=>l.id===oldId?ins:l);
+          // Actualizar items en caché
+          items=items.map(i=>i.list_id===oldId?{...i,list_id:ins.id}:i);
+          await cacheItems(items);
+        }
+      }
+    }catch(e){}
+  }
+  await flushPending();
+  await loadItems();
+  showNetworkToast('Conexión restaurada ✓');
+});
 window.addEventListener('offline',()=>{isOnline=false;document.getElementById('offline-banner').classList.add('show')});
 
 // ══ INIT ══
 async function init(){
   await openDB();
   initCatButtons();initEmojiButtons();
-  const{data:{session}}=await sb.auth.getSession();
-  if(session){
-    currentUser=session.user;
-    await loadFamilyAndSetup();
-  } else {
+
+  // Escuchar cambios de sesión — refresca token automáticamente
+  sb.auth.onAuthStateChange(async(event,session)=>{
+    if(event==='TOKEN_REFRESHED'){
+      currentUser=session.user;
+    }
+    if(event==='SIGNED_OUT'||(!session&&currentUser)){
+      // Sesión expirada o cerrada → volver al login con mensaje claro
+      currentUser=null;currentFamily=null;items=[];lists=[];currentListId=null;
+      if(realtimeSub){sb.removeChannel(realtimeSub);realtimeSub=null;}
+      showScreen('auth');
+      setAuthErr('Tu sesión ha expirado. Vuelve a entrar.');
+    }
+  });
+
+  try{
+    const{data:{session}}=await sb.auth.getSession();
+    if(session){
+      currentUser=session.user;
+      await loadFamilyAndSetup();
+    } else {
+      showScreen('auth');
+    }
+  } catch(e){
     showScreen('auth');
+    setAuthErr('Error de conexión. Comprueba tu red.');
   }
+
   document.getElementById('loading').classList.add('hidden');
   if(!isOnline)document.getElementById('offline-banner').classList.add('show');
 }
@@ -968,12 +1025,58 @@ async function ensureDefaultList(){
 }
 
 // ══ ROL ══
-function showRoleScreen(){
+async function showRoleScreen(){
   const h=new Date().getHours();
   const greeting=h<13?'Buenos días ☀️':h<20?'Buenas tardes 👋':'Buenas noches 🌙';
   document.getElementById('role-greeting').textContent=greeting;
   document.getElementById('role-family-name').textContent=currentFamily?.name||'Mi Familia';
   showScreen('role');
+
+  // Cargar conteos de pendientes por lista en segundo plano
+  if(isOnline&&lists.length){
+    try{
+      const{data}=await sb.from('items')
+        .select('list_id')
+        .eq('family_id',currentFamily.id)
+        .eq('archived',false)
+        .eq('checked',false);
+
+      // Contar por lista
+      const counts={};
+      (data||[]).forEach(i=>{counts[i.list_id]=(counts[i.list_id]||0)+1});
+
+      // Total pendientes
+      const totalPending=Object.values(counts).reduce((a,b)=>a+b,0);
+      const listsWithItems=lists.filter(l=>counts[l.id]>0);
+
+      // Mostrar pills de listas activas
+      const summary=document.getElementById('role-lists-summary');
+      const pills=document.getElementById('role-lists-pills');
+      if(listsWithItems.length>0){
+        summary.style.display='block';
+        pills.innerHTML=listsWithItems.map(l=>`
+          <div style="display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:20px;background:rgba(52,199,89,0.1);border:1px solid rgba(52,199,89,0.25);font-size:12px;font-weight:600;color:#1a9e3a">
+            <span>${l.emoji||'🛒'}</span>
+            <span>${escHtml(l.name)}</span>
+            <span style="background:var(--green);color:#fff;border-radius:8px;padding:1px 6px;font-size:10px">${counts[l.id]}</span>
+          </div>`).join('');
+
+        // Actualizar subtítulos de botones
+        document.getElementById('role-editor-sub').textContent=
+          `${totalPending} producto${totalPending!==1?'s':''} pendiente${totalPending!==1?'s':''} en ${listsWithItems.length} lista${listsWithItems.length!==1?'s':''}`;
+        document.getElementById('role-buyer-sub').textContent=
+          totalPending>0
+            ? `${totalPending} producto${totalPending!==1?'s':''} por comprar`
+            : 'Todas las listas están vacías';
+      } else {
+        summary.style.display='none';
+        document.getElementById('role-editor-sub').textContent='Todas las listas están vacías. Añade productos.';
+        document.getElementById('role-buyer-sub').textContent='No hay productos pendientes por comprar.';
+      }
+    }catch(e){
+      // Si falla, mostrar sin conteos — no bloquear la UI
+    }
+  }
 }
 
 function setRole(role){
@@ -990,9 +1093,9 @@ function goToRole(){showRoleScreen();}
 function goToEditor(){
   currentRole='editor';
   renderListsPills();
-  renderItems();
   showScreen('editor');
   document.getElementById('invite-code').textContent=currentFamily?.code||'···';
+  loadItems(); // siempre refresca desde BD al volver al editor
   loadHistory();
 }
 async function goToBuyer(){
@@ -1022,9 +1125,6 @@ async function renderBuyerPick(){
       if(data){data.forEach(i=>{countsByList[i.list_id]=(countsByList[i.list_id]||0)+1;})}
     }catch(e){}
   }
-  // También contar los items locales
-  items.forEach(i=>{if(!i.checked&&!i.archived)countsByList[i.list_id]=(countsByList[i.list_id]||0)+0}); // ya contado arriba
-
   container.innerHTML=lists.map(l=>{
     const count=countsByList[l.id]||0;
     const hasItems=count>0;
@@ -1152,7 +1252,14 @@ function renderListsPills(){
 }
 
 async function switchList(id){
-  currentListId=id;renderListsPills();await loadItems();
+  currentListId=id;
+  // Limpiar búsqueda activa al cambiar de lista
+  searchQuery='';
+  const si=document.getElementById('search-input');if(si)si.value='';
+  const sc=document.getElementById('search-clear');if(sc)sc.classList.remove('show');
+  renderListsPills();
+  await loadItems();
+  resubscribeIfNeeded();
 }
 
 async function deleteList(id){
@@ -1181,17 +1288,32 @@ async function createNewList(){
 // ══ ITEMS ══
 async function loadItems(){
   if(!currentFamily||!currentListId)return;
+  items=[];// ← limpiar siempre antes de cargar
   if(isOnline){
     try{
-      const{data,error}=await sb.from('items').select('*').eq('family_id',currentFamily.id).eq('list_id',currentListId).eq('archived',false).order('created_at',{ascending:true});
-      if(!error&&data){items=data;await cacheItems(data)}
-      else{
-        // list_id no existe en tabla → cargar sin filtro
-        const r=await sb.from('items').select('*').eq('family_id',currentFamily.id).eq('archived',false).order('created_at',{ascending:true});
+      const{data,error}=await sb.from('items').select('*')
+        .eq('family_id',currentFamily.id)
+        .eq('list_id',currentListId)
+        .eq('archived',false)
+        .order('created_at',{ascending:true});
+      if(!error&&data){
+        items=data;
+        await cacheItems(data);
+      } else {
+        // list_id no existe en tabla → cargar sin filtro de lista
+        const r=await sb.from('items').select('*')
+          .eq('family_id',currentFamily.id)
+          .eq('archived',false)
+          .order('created_at',{ascending:true});
         if(!r.error&&r.data){items=r.data;await cacheItems(r.data)}
       }
-    }catch(e){items=await getCachedItems()}
-  } else {items=await getCachedItems()}
+    }catch(e){
+      // Solo usar caché si falla la red
+      items=await getCachedItems();
+    }
+  } else {
+    items=await getCachedItems();
+  }
   renderItems();updateBadges();
 }
 
@@ -1282,21 +1404,31 @@ function setupLongPress(el,cb){
 async function addItem(){
   if(!currentListId){toast('Selecciona una lista primero');return}
   const ni=document.getElementById('item-name-input'),qi=document.getElementById('item-qty-input');
-  const name=ni.value.trim();if(!name)return;
+  const name=ni.value.trim().slice(0,120);if(!name)return;// max 120 chars
   const cat=selectedCat||guessCat(name);
   const item={id:crypto.randomUUID(),family_id:currentFamily.id,list_id:currentListId,name,quantity:qi.value.trim()||null,category:cat,checked:false,archived:false,created_at:new Date().toISOString(),added_by:currentUser?.id,added_by_email:currentUser?.email};
   items.push(item);renderItems();ni.value='';qi.value='';selectedCat='otros';initCatButtons();closeAddModal();
   toast('Añadido ✓');if(navigator.vibrate)navigator.vibrate(20);
-  if(isOnline){try{await sb.from('items').insert(item)}catch(e){await sb.from('items').insert({...item,list_id:undefined,added_by:undefined,added_by_email:undefined}).catch(()=>{})}}
-  else{await queuePending({type:'add',payload:item});await cacheItems(items)}
+  if(isOnline){
+    try{
+      await sb.from('items').insert(item);
+    }catch(e){
+      try{await sb.from('items').insert({...item,list_id:undefined,added_by:undefined,added_by_email:undefined})}
+      catch(e2){
+        // Guardar offline si falla completamente
+        await queuePending({type:'add',payload:item});
+        showNetworkToast('Guardado en local. Se sincronizará al reconectar.');
+      }
+    }
+  } else{await queuePending({type:'add',payload:item});await cacheItems(items)}
 }
 
 async function addItemFromBuyer(){
   if(!currentListId){toast('Sin lista activa');return}
   const ni=document.getElementById('buyer-item-input'),qi=document.getElementById('buyer-qty-input');
-  const name=ni.value.trim();if(!name)return;
+  const name=ni.value.trim().slice(0,120);if(!name)return;
   const cat=guessCat(name);
-  const item={id:crypto.randomUUID(),family_id:currentFamily.id,list_id:currentListId,name,quantity:qi.value.trim()||null,category:cat,checked:false,archived:false,created_at:new Date().toISOString(),added_by:currentUser?.id,added_by_email:currentUser?.email};
+  const item={id:crypto.randomUUID(),family_id:currentFamily.id,list_id:currentListId,name,quantity:(qi.value.trim()||'').slice(0,20)||null,category:cat,checked:false,archived:false,created_at:new Date().toISOString(),added_by:currentUser?.id,added_by_email:currentUser?.email};
   items.push(item);
   shopItems.push({...item,_done:false});
   injectBuyerItem(item);
@@ -1315,18 +1447,23 @@ async function toggleItem(id){
 
 function deleteItemWithUndo(id){
   const item=items.find(i=>i.id===id);if(!item)return;
-  clearTimeout(undoTimer);undoStack=item;
+  clearTimeout(undoTimer);
+  undoStack={item,deleted:false};
   items=items.filter(i=>i.id!==id);renderItems();
   showUndoToast(`${item.name} eliminado`);
+  // Marcar como borrado en BD después de 5s solo si no se deshizo
   undoTimer=setTimeout(async()=>{
-    undoStack=null;
+    if(!undoStack)return;
+    undoStack.deleted=true;undoStack=null;
     if(isOnline)await sb.from('items').delete().eq('id',id).catch(()=>{});
-    else{await queuePending({type:'del',id});await cacheItems(items)}
+    else{await queuePending({type:'del',payload:{id}});await cacheItems(items)}
   },5000);
 }
 function undoDelete(){
-  if(!undoStack)return;clearTimeout(undoTimer);
-  items.push(undoStack);items.sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));
+  if(!undoStack||undoStack.deleted)return;
+  clearTimeout(undoTimer);
+  items.push(undoStack.item);
+  items.sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));
   renderItems();hideUndoToast();undoStack=null;toast('Recuperado ✓');
 }
 async function deleteItem(id){
@@ -1353,12 +1490,19 @@ async function saveEditItem(){
 }
 
 // ══ REALTIME ══
+function resubscribeIfNeeded(){
+  // Si ya hay suscripción activa no es necesario recrearla
+  // el filtro es por family_id, los items de otras listas se filtran en JS
+  // Pero si no hay suscripción, crearla
+  if(!realtimeSub)subscribeRealtime();
+}
 function subscribeRealtime(){
   if(!currentFamily||realtimeSub)return;
   realtimeSub=sb.channel(`fc-${currentFamily.id}`)
     .on('postgres_changes',{event:'*',schema:'public',table:'items',filter:`family_id=eq.${currentFamily.id}`},p=>{
       const inBuyer=document.getElementById('screen-buyer').classList.contains('active');
       if(p.eventType==='INSERT'&&!items.find(i=>i.id===p.new.id)){
+        // Solo procesar items de la lista activa
         if(!p.new.list_id||p.new.list_id===currentListId){
           items.push(p.new);renderItems();
           if(inBuyer){
@@ -1369,7 +1513,12 @@ function subscribeRealtime(){
             if(navigator.vibrate)navigator.vibrate([30,20,30]);
             const who=(p.new.added_by_email||'Alguien').split('@')[0];
             toast(`📥 ${who} añadió "${p.new.name}"`);
+            sendRemoteNotif(p.new.name,who);
           }
+        }
+        // Si el item es de otra lista, solo actualizar badges del rol
+        else if(p.new.family_id===currentFamily?.id){
+          // Nada que hacer en UI pero el conteo del rol se actualizará al volver
         }
       }
       if(p.eventType==='UPDATE'){const idx=items.findIndex(i=>i.id===p.new.id);if(idx>=0){items[idx]=p.new;renderItems()}}
@@ -1483,8 +1632,9 @@ function updateBuyerCounter(){
 
 // ══ FINALIZAR COMPRA ══
 function finishShop(){
-  const doneCount=shopItems.filter(i=>i._done).length;
-  const pendingCount=shopItems.filter(i=>!i._done).length;
+  const toArchive=items.filter(i=>i.checked);
+  const doneCount=toArchive.length;
+  const pendingCount=items.filter(i=>!i.checked).length;
   let msg=`Se archivarán ${doneCount} producto${doneCount!==1?'s':''} comprado${doneCount!==1?'s':''}.`;
   if(pendingCount>0)msg+=` Quedan ${pendingCount} sin comprar en la lista.`;
   document.getElementById('confirm-finish-sub').textContent=msg;
@@ -1493,15 +1643,32 @@ function finishShop(){
 function closeConfirm(){document.getElementById('confirm-finish').classList.remove('open')}
 async function doFinishShop(){
   closeConfirm();
-  const doneIds=shopItems.filter(i=>i._done).map(i=>i.id);
+
+  // Archivar TODOS los items checked en la lista activa (no solo los marcados en esta sesión)
+  const toArchive=items.filter(i=>i.checked);
+  const doneIds=toArchive.map(i=>i.id);
+
   if(doneIds.length&&isOnline){
     await sb.from('items').update({archived:true}).in('id',doneIds).catch(()=>{});
-    await sb.from('history').insert({family_id:currentFamily.id,item_count:doneIds.length,items_snapshot:JSON.stringify(shopItems.filter(i=>i._done).map(i=>i.name)),created_at:new Date().toISOString()}).catch(()=>{});
+    const activeList=lists.find(l=>l.id===currentListId);
+    await sb.from('history').insert({
+      family_id:currentFamily.id,
+      list_id:currentListId,
+      list_name:activeList?.name||'Lista',
+      item_count:doneIds.length,
+      items_snapshot:JSON.stringify(toArchive.map(i=>({name:i.name,quantity:i.quantity,category:i.category}))),
+      created_at:new Date().toISOString()
+    }).catch(()=>{});
   }
+
+  // Limpiar estado local
   items=items.filter(i=>!doneIds.includes(i.id));
   shopItems=[];
-  renderItems();loadHistory();
-  toast('¡Compra terminada! 🛍️');if(navigator.vibrate)navigator.vibrate([50,30,50,30,100]);
+
+  renderItems();
+  loadHistory();
+  toast('¡Compra terminada! 🛍️');
+  if(navigator.vibrate)navigator.vibrate([50,30,50,30,100]);
   goToEditor();
 }
 
@@ -1515,18 +1682,31 @@ function renderHistory(){
   const list=document.getElementById('history-list');
   if(!historyData.length){list.innerHTML='<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">Sin historial</div><div class="empty-sub">Las compras completadas aparecerán aquí</div></div>';return}
   list.innerHTML=historyData.map(h=>{
-    const names=JSON.parse(h.items_snapshot||'[]');
+    // Soportar tanto formato antiguo (array de strings) como nuevo (array de objetos)
+    const raw=JSON.parse(h.items_snapshot||'[]');
+    const names=raw.map(i=>typeof i==='string'?i:i.name);
     const prev=names.slice(0,3).join(', ')+(names.length>3?` y ${names.length-3} más`:'');
     const date=new Date(h.created_at).toLocaleDateString('es-ES',{day:'numeric',month:'long',year:'numeric'});
-    return`<div class="history-item" onclick="repeatList('${h.id}')"><div class="history-date">${date}</div><div class="history-count">${h.item_count} productos</div><div class="history-preview">${escHtml(prev)}</div></div>`;
+    const listLabel=h.list_name?`<span style="background:rgba(0,122,255,.08);color:var(--accent);border-radius:8px;padding:1px 7px;font-size:11px;font-weight:600;margin-left:6px">${escHtml(h.list_name)}</span>`:'';
+    return`<div class="history-item" onclick="repeatList('${h.id}')"><div class="history-date">${date}${listLabel}</div><div class="history-count">${h.item_count} productos comprados</div><div class="history-preview">${escHtml(prev)}</div></div>`;
   }).join('');
 }
 async function repeatList(id){
   const entry=historyData.find(h=>h.id===id);if(!entry||!currentListId)return;
-  const names=JSON.parse(entry.items_snapshot||'[]');if(!names.length)return;
-  const newItems=names.map(n=>({id:crypto.randomUUID(),family_id:currentFamily.id,list_id:currentListId,name:n,quantity:null,category:guessCat(n),checked:false,archived:false,created_at:new Date().toISOString()}));
-  items.push(...newItems);renderItems();goBackFromHistory();toast(`${names.length} productos añadidos ✓`);
-  if(isOnline){try{await sb.from('items').insert(newItems)}catch(e){await sb.from('items').insert(newItems.map(i=>({...i,list_id:undefined}))).catch(()=>{})}}
+  const raw=JSON.parse(entry.items_snapshot||'[]');if(!raw.length)return;
+  // Soportar formato antiguo (strings) y nuevo (objetos con name/quantity/category)
+  const newItems=raw.map(r=>{
+    const name=typeof r==='string'?r:r.name;
+    const quantity=typeof r==='object'?r.quantity||null:null;
+    const category=typeof r==='object'?r.category||guessCat(name):guessCat(name);
+    return{id:crypto.randomUUID(),family_id:currentFamily.id,list_id:currentListId,name,quantity,category,checked:false,archived:false,created_at:new Date().toISOString()};
+  });
+  // No añadir duplicados
+  const cur=items.map(i=>i.name.toLowerCase());
+  const toAdd=newItems.filter(i=>!cur.includes(i.name.toLowerCase()));
+  if(!toAdd.length){toast('Todos los productos ya están en la lista');return;}
+  items.push(...toAdd);renderItems();goBackFromHistory();toast(`${toAdd.length} productos añadidos ✓`);
+  if(isOnline){try{await sb.from('items').insert(toAdd)}catch(e){await sb.from('items').insert(toAdd.map(i=>({...i,list_id:undefined}))).catch(()=>{})}}
 }
 
 // ══ SUGERENCIAS ══
@@ -1595,13 +1775,34 @@ function toast(msg){const el=document.getElementById('toast');el.textContent=msg
 let undoHideTimer;
 function showUndoToast(msg){const el=document.getElementById('toast-undo');document.getElementById('toast-undo-msg').textContent=msg;el.classList.add('show');clearTimeout(undoHideTimer);undoHideTimer=setTimeout(hideUndoToast,5000)}
 function hideUndoToast(){document.getElementById('toast-undo').classList.remove('show')}
+// Toast de red — aparece en la parte superior para no tapar la lista
+function showNetworkToast(msg){
+  const t=document.getElementById('toast');
+  t.textContent=msg;t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>t.classList.remove('show'),3000);
+}
 
 // ══ VOZ ══
 let voiceAutoCloseTimer=null;
 function startVoice(){
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!SR){toast('Voz no disponible en este navegador');return}
+  if(!SR){
+    // iOS Safari < 16.4 o Firefox — mostrar mensaje específico
+    const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent);
+    if(isIOS){
+      toast('En iOS usa Safari 16.4 o superior para la voz');
+    } else {
+      toast('Tu navegador no soporta reconocimiento de voz. Prueba Chrome.');
+    }
+    // Ocultar el botón de voz si no está soportado
+    const fab=document.getElementById('fab-voice');
+    if(fab)fab.style.display='none';
+    return;
+  }
   if(!currentListId){toast('Crea una lista antes de usar la voz');return}
+  // En iOS necesitamos que el contexto de audio esté activo (user gesture)
+  // startVoice siempre se llama desde un click, así que está OK
   voiceDetected=[];
   const ov=document.getElementById('voice-overlay'),int=document.getElementById('voice-interim'),st=document.getElementById('voice-status'),det=document.getElementById('voice-detected'),act=document.getElementById('voice-actions'),hint=document.getElementById('voice-hint'),res=document.getElementById('voice-response');
   int.textContent='Escuchando...';int.classList.remove('final');det.style.display='none';det.innerHTML='';act.style.display='none';hint.style.display='block';res.textContent='';ov.classList.remove('processing');ov.classList.add('active');
@@ -1609,7 +1810,19 @@ function startVoice(){
   recognition=new SR();recognition.lang='es-ES';recognition.interimResults=true;recognition.continuous=false;recognition.maxAlternatives=3;
   let ft='';
   recognition.onresult=e=>{let it='';for(let i=e.resultIndex;i<e.results.length;i++){if(e.results[i].isFinal)ft+=e.results[i][0].transcript+' ';else it+=e.results[i][0].transcript;}int.textContent=(ft+it).trim()||'Escuchando...';int.classList.toggle('final',!!ft&&!it)};
-  recognition.onerror=e=>{if(e.error==='aborted')return;if(e.error==='no-speech'){st.textContent='No escuché nada. Pulsa de nuevo.';return}st.textContent='Error: '+e.error;setTimeout(()=>closeVoiceOverlay(),2000)};
+  recognition.onerror=e=>{
+    if(e.error==='aborted')return;
+    if(e.error==='no-speech'){st.textContent='No escuché nada. Pulsa el micrófono.';return}
+    if(e.error==='not-allowed'){
+      st.textContent='Permiso de micrófono denegado';
+      setTimeout(()=>{closeVoiceOverlay();toast('Ve a Ajustes del navegador y activa el micrófono');},1500);
+      return;
+    }
+    if(e.error==='network'){st.textContent='Sin conexión. La voz necesita internet.';setTimeout(()=>closeVoiceOverlay(),2000);return;}
+    if(e.error==='audio-capture'){st.textContent='No se detectó micrófono en el dispositivo';setTimeout(()=>closeVoiceOverlay(),2000);return;}
+    st.textContent='Error: '+e.error;
+    setTimeout(()=>closeVoiceOverlay(),2000);
+  };
   recognition.onend=()=>{
     const text=ft.trim();
     if(!text){st.textContent='No escuché nada';int.textContent='Pulsa el micrófono para reintentar';return}
