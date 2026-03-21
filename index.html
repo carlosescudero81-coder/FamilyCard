@@ -10,10 +10,96 @@
 <title>FamilyCart</title>
 <link rel="manifest" id="pwa-manifest">
 <script>
-// Inyectar manifest PWA dinámicamente
-const manifest={name:'FamilyCart',short_name:'FamilyCart',description:'Lista de la compra familiar',start_url:window.location.origin+window.location.pathname,display:'standalone',background_color:'#ffffff',theme_color:'#007aff',orientation:'portrait',icons:[{src:'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="%23007aff"/><text y=".9em" font-size="72" x="14">🛒</text></svg>',sizes:'any',type:'image/svg+xml'}]};
-const blob=new Blob([JSON.stringify(manifest)],{type:'application/json'});
-document.getElementById('pwa-manifest').href=URL.createObjectURL(blob);
+// ══ SERVICE WORKER — el HTML se registra a sí mismo como SW ══
+// Cuando el navegador carga este archivo como script SW (sin window),
+// ejecutamos la lógica de caché. En contexto de página normal, lo ignoramos.
+if(typeof window === 'undefined'){
+  // ── Contexto Service Worker ──
+  const CACHE = 'familycart-v2.1.0';
+  const PREV  = /^familycart-v(?!2\.1\.0)/; // borra versiones anteriores
+
+  self.addEventListener('install', e => {
+    self.skipWaiting();
+    e.waitUntil(
+      caches.open(CACHE).then(c =>
+        c.add(self.registration.scope).catch(()=>{})
+      )
+    );
+  });
+
+  self.addEventListener('activate', e => {
+    e.waitUntil(
+      caches.keys()
+        .then(keys => Promise.all(
+          keys.filter(k => PREV.test(k)).map(k => caches.delete(k))
+        ))
+        .then(() => self.clients.claim())
+    );
+  });
+
+  // Network-first: intenta red → guarda en caché → fallback a caché si offline
+  self.addEventListener('fetch', e => {
+    if(e.request.method !== 'GET') return;
+    const url = new URL(e.request.url);
+    // No interceptar peticiones a Supabase ni externos — solo el propio HTML
+    if(url.origin !== self.location.origin) return;
+    e.respondWith(
+      fetch(e.request).then(res => {
+        if(res && res.status === 200){
+          const clone = res.clone();
+          caches.open(CACHE).then(c => c.put(e.request, clone));
+        }
+        return res;
+      }).catch(() => caches.match(e.request))
+    );
+  });
+
+  self.addEventListener('message', e => {
+    if(e.data === 'skipWaiting') self.skipWaiting();
+  });
+
+} else {
+  // ── Contexto página normal ──
+
+  // ── VERSION — cambiar aquí para forzar actualización ──
+  const APP_VERSION = '2.1.0';
+
+  // Manifest PWA dinámico
+  const manifest={name:'FamilyCart',short_name:'FamilyCart',description:'Lista de la compra familiar',start_url:window.location.origin+window.location.pathname,display:'standalone',background_color:'#ffffff',theme_color:'#007aff',orientation:'portrait',icons:[{src:'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="%23007aff"/><text y=".9em" font-size="72" x="14">🛒</text></svg>',sizes:'any',type:'image/svg+xml'}]};
+  const mblob=new Blob([JSON.stringify(manifest)],{type:'application/json'});
+  document.getElementById('pwa-manifest').href=URL.createObjectURL(mblob);
+
+  // Registrar este mismo HTML como Service Worker
+  if('serviceWorker' in navigator){
+    // Usamos la URL del HTML actual como script del SW
+    // El navegador lo ejecuta como JS — el bloque de arriba (typeof window==='undefined') lo gestiona
+    const swUrl = location.pathname + (location.search ? location.search + '&sw=1' : '?sw=1');
+
+    navigator.serviceWorker.register(location.pathname, {scope: './'})
+      .then(reg => {
+        reg.update(); // comprobar actualizaciones en cada carga
+
+        reg.addEventListener('updatefound', () => {
+          const nw = reg.installing;
+          nw.addEventListener('statechange', () => {
+            if(nw.state === 'installed' && navigator.serviceWorker.controller){
+              nw.postMessage('skipWaiting');
+            }
+          });
+        });
+      })
+      .catch(err => {
+        // No es un error crítico — la app funciona sin SW
+        console.info('[FC] SW no disponible en este entorno:', err.message);
+      });
+
+    // Recargar cuando el nuevo SW tome el control (aplica actualización)
+    let refreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if(!refreshing){ refreshing = true; window.location.reload(); }
+    });
+  }
+}
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -938,6 +1024,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
 <script>
 // ══ SUPABASE ══
 const SUPABASE_URL='https://rfflaqpriubwepgqqybr.supabase.co';
+const APP_VERSION='2.1.0'; // debe coincidir con el del Service Worker
 const SUPABASE_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJmZmxhcXByaXVid2VwZ3FxeWJyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0OTA0MTYsImV4cCI6MjA4OTA2NjQxNn0.PzW0mM8-nADHMriezO6MUvkSPdIHgGziiUezN0jgyvM';
 const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 
@@ -1030,6 +1117,14 @@ window.addEventListener('offline',()=>{isOnline=false;document.getElementById('o
 async function init(){
   await openDB();
   initCatButtons();initEmojiButtons();
+
+  // Toast de actualización si la versión cambió
+  const lastVersion = localStorage.getItem('fc_version');
+  if(lastVersion && lastVersion !== APP_VERSION){
+    // Esperar a que la UI esté lista antes de mostrar el toast
+    setTimeout(()=>toast('✨ App actualizada a v'+APP_VERSION), 1200);
+  }
+  localStorage.setItem('fc_version', APP_VERSION);
 
   // Escuchar cambios de sesión — refresca token automáticamente
   sb.auth.onAuthStateChange(async(event,session)=>{
