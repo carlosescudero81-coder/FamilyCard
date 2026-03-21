@@ -1395,11 +1395,25 @@ function switchEditorTab(tab){
 // ══ PLANTILLA SEMANAL ══
 let weeklySelectedCat='otros';
 
-function getWeeklyTemplate(){
-  try{return JSON.parse(localStorage.getItem('fc_weekly_'+(currentFamily?.id||''))||'[]')}catch(e){return[]}
+function weeklyKey(){
+  return currentFamily?.id ? 'fc_weekly_'+currentFamily.id : null;
 }
-function saveWeeklyTemplate(items){
-  localStorage.setItem('fc_weekly_'+(currentFamily?.id||''),JSON.stringify(items));
+function getWeeklyTemplate(){
+  const key=weeklyKey();
+  if(!key)return[];
+  try{
+    const data=localStorage.getItem(key);
+    if(data)return JSON.parse(data);
+    // Migración: si existe data en key sin id, moverla a la key correcta
+    const legacy=localStorage.getItem('fc_weekly_');
+    if(legacy){localStorage.setItem(key,legacy);localStorage.removeItem('fc_weekly_');return JSON.parse(legacy);}
+    return[];
+  }catch(e){return[]}
+}
+function saveWeeklyTemplate(tplItems){
+  const key=weeklyKey();
+  if(!key){console.warn('[FC] saveWeeklyTemplate sin familia cargada — abortado');return;}
+  localStorage.setItem(key,JSON.stringify(tplItems));
 }
 
 function renderWeeklyList(){
@@ -1686,8 +1700,14 @@ function onSearch(val){searchQuery=val.trim().toLowerCase();document.getElementB
 function clearSearch(){searchQuery='';const i=document.getElementById('search-input');if(i)i.value='';document.getElementById('search-clear').classList.remove('show');renderItems();}
 
 // ══ MEJORA 6: PLANTILLAS ══
-function getTemplates(){try{return JSON.parse(localStorage.getItem('fc_tpl_'+(currentFamily?.id||''))||'[]')}catch(e){return[]}}
-function saveTemplates(t){localStorage.setItem('fc_tpl_'+(currentFamily?.id||''),JSON.stringify(t))}
+function getTemplates(){
+  if(!currentFamily?.id)return[];
+  try{return JSON.parse(localStorage.getItem('fc_tpl_'+currentFamily.id)||'[]')}catch(e){return[]}
+}
+function saveTemplates(t){
+  if(!currentFamily?.id)return;
+  localStorage.setItem('fc_tpl_'+currentFamily.id,JSON.stringify(t));
+}
 function saveCurrentAsTemplate(){
   if(!items.length){toast('La lista está vacía');return}
   const name=prompt('Nombre para la plantilla:','Lista '+new Date().toLocaleDateString('es-ES',{day:'numeric',month:'short'}));
