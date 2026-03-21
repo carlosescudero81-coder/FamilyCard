@@ -1074,7 +1074,7 @@ function avatarColor(uid){if(!uid)return'#8e8e93';let h=0;for(let i=0;i<uid.leng
 function avatarInitial(email){return email?email[0].toUpperCase():'?'}
 
 // ══ INDEXEDDB ══
-function openDB(){return new Promise((res,rej)=>{const req=indexedDB.open('familycart_v6',1);req.onupgradeneeded=e=>{const d=e.target.result;['items','pending','lists'].forEach(s=>{if(!d.objectStoreNames.contains(s))d.createObjectStore(s,{keyPath:'id',autoIncrement:s==='pending'})});};req.onsuccess=e=>{db=e.target.result;res()};req.onerror=()=>res()})}
+function openDB(){return new Promise((res,rej)=>{const req=indexedDB.open('familycart_v7',1);req.onupgradeneeded=e=>{const d=e.target.result;['items','pending','lists','weekly'].forEach(s=>{if(!d.objectStoreNames.contains(s))d.createObjectStore(s,{keyPath:'id',autoIncrement:s==='pending'})});};req.onsuccess=e=>{db=e.target.result;res()};req.onerror=()=>res()})}
 async function cacheItems(data){if(!db)return;const tx=db.transaction('items','readwrite');const s=tx.objectStore('items');s.clear();data.forEach(i=>s.put(i))}
 async function getCachedItems(){if(!db)return[];return new Promise(res=>{const r=db.transaction('items','readonly').objectStore('items').getAll();r.onsuccess=()=>res(r.result||[]);r.onerror=()=>res([])})}
 async function queuePending(a){if(!db)return;db.transaction('pending','readwrite').objectStore('pending').add(a)}
@@ -1201,6 +1201,7 @@ async function doRegister(){
   btn.disabled=false;btn.textContent='Crear familia';
   currentFamily=fam;
   await ensureDefaultList();
+  await initWeeklyCache();
   showRoleScreen();
 }
 
@@ -1218,6 +1219,7 @@ async function doJoinFamily(){
   await sb.from('family_members').upsert({family_id:fam.id,user_id:currentUser.id});
   currentFamily=fam;
   await ensureDefaultList();
+  await initWeeklyCache();
   showRoleScreen();
 }
 
@@ -1225,6 +1227,7 @@ async function doLogout(){
   await sb.auth.signOut();
   if(realtimeSub)sb.removeChannel(realtimeSub);
   currentUser=null;currentFamily=null;items=[];lists=[];currentListId=null;realtimeSub=null;
+  _weeklyCache=null;_weeklyCacheFamily=null;
   showScreen('auth');
 }
 
@@ -1234,6 +1237,7 @@ async function loadFamilyAndSetup(){
   if(data?.families){
     currentFamily=data.families;
     await ensureDefaultList();
+    await initWeeklyCache(); // cargar plantilla en memoria desde IDB
     subscribeRealtime();
     showRoleScreen();
   } else {
@@ -1392,38 +1396,90 @@ function switchEditorTab(tab){
   else if(tab==='weekly'){showScreen('weekly');renderWeeklyList();prevScreen='editor';}
 }
 
-// ══ PLANTILLA SEMANAL ══
+// ══ PLANTILLA SEMANAL — IndexedDB directa, siempre async ══
+// La plantilla NUNCA se toca durante la compra.
+// Solo se modifica por acción explícita del usuario en el tab Plantilla.
 let weeklySelectedCat='otros';
 
 function weeklyKey(){
   return currentFamily?.id ? 'fc_weekly_'+currentFamily.id : null;
 }
-function getWeeklyTemplate(){
-  const key=weeklyKey();
-  if(!key)return[];
-  try{
-    const data=localStorage.getItem(key);
-    if(data)return JSON.parse(data);
-    // Migración: si existe data en key sin id, moverla a la key correcta
-    const legacy=localStorage.getItem('fc_weekly_');
-    if(legacy){localStorage.setItem(key,legacy);localStorage.removeItem('fc_weekly_');return JSON.parse(legacy);}
-    return[];
-  }catch(e){return[]}
-}
-function saveWeeklyTemplate(tplItems){
-  const key=weeklyKey();
-  if(!key){console.warn('[FC] saveWeeklyTemplate sin familia cargada — abortado');return;}
-  localStorage.setItem(key,JSON.stringify(tplItems));
+
+// Leer de IDB siempre — garantiza que la pantalla muestra datos reales
+async function loadWeeklyTemplateFromIDB(){
+  const key = weeklyKey();
+  if(!key) return [];
+  if(!db) return _weeklyLegacyMigrate(key);
+  return new Promise(res => {
+    try {
+      const req = db.transaction('weekly','readonly').objectStore('weekly').get(key);
+      req.onsuccess = () => {
+        const data = req.result?.items;
+        if(data && data.length){ res(data); return; }
+        res(_weeklyLegacyMigrate(key));
+      };
+      req.onerror = () => res(_weeklyLegacyMigrate(key));
+    } catch(e){ res(_weeklyLegacyMigrate(key)); }
+  });
 }
 
-function renderWeeklyList(){
-  const area=document.getElementById('weekly-list-area');
-  const countEl=document.getElementById('weekly-total-count');
-  const items=getWeeklyTemplate();
-  const btn=document.getElementById('weekly-start-shop-btn');
-  if(countEl)countEl.textContent=items.length?'('+items.length+')':'';
-  if(btn)btn.disabled=!items.length;
-  if(!area)return;
+// Migración única desde localStorage (versiones anteriores)
+function _weeklyLegacyMigrate(key){
+  try {
+    const keys = [key, 'fc_weekly_', 'fc_weekly_undefined'];
+    for(const k of keys){
+      const raw = localStorage.getItem(k);
+      if(raw){
+        const parsed = JSON.parse(raw);
+        if(parsed && parsed.length){
+          saveWeeklyTemplate(parsed); // guardar en IDB
+          keys.forEach(c => localStorage.removeItem(c));
+          return parsed;
+        }
+      }
+    }
+  } catch(e){}
+  return [];
+}
+
+function saveWeeklyTemplate(tplItems){
+  const key = weeklyKey();
+  if(!key || !db){ console.warn('[FC] saveWeeklyTemplate: sin familia o IDB'); return; }
+  try {
+    db.transaction('weekly','readwrite').objectStore('weekly')
+      .put({id: key, items: tplItems, updated: Date.now()});
+  } catch(e){ console.warn('[FC] Error guardando plantilla:', e); }
+}
+
+// Helper para lectura síncrona en funciones que no pueden ser async
+// Solo se usa cuando YA sabemos que la pantalla acaba de llamar loadWeeklyTemplateFromIDB
+let _weeklySnapCache = [];
+function getWeeklyTemplate(){ return [..._weeklySnapCache]; }
+
+// autoAddToWeekly: solo desde comprador/voz, nunca desde flujo de compra
+function autoAddToWeekly(name, qty, category){
+  loadWeeklyTemplateFromIDB().then(items => {
+    if(items.find(it => it.name.toLowerCase() === name.toLowerCase())) return;
+    items.push({id:crypto.randomUUID(), name, quantity:qty||null, category:category||guessCat(name)});
+    saveWeeklyTemplate(items);
+    _weeklySnapCache = items;
+  });
+}
+
+async function initWeeklyCache(){ /* no-op */ }
+
+async function renderWeeklyList(){
+  const area = document.getElementById('weekly-list-area');
+  const countEl = document.getElementById('weekly-total-count');
+  const btn = document.getElementById('weekly-start-shop-btn');
+  if(!area) return;
+
+  // Siempre leer de IDB — nunca del cache en memoria
+  const items = await loadWeeklyTemplateFromIDB();
+  _weeklySnapCache = items; // actualizar snapshot para funciones síncronas
+
+  if(countEl) countEl.textContent = items.length ? '('+items.length+')' : '';
+  if(btn) btn.disabled = !items.length;
 
   if(!items.length){
     area.innerHTML=`<div class="empty-state">
@@ -1437,14 +1493,8 @@ function renderWeeklyList(){
     return;
   }
 
-  // Agrupar por categoría
   const groups={};
-  items.forEach(it=>{
-    const cat=it.category||'otros';
-    if(!groups[cat])groups[cat]=[];
-    groups[cat].push(it);
-  });
-
+  items.forEach(it=>{ const cat=it.category||'otros'; if(!groups[cat])groups[cat]=[]; groups[cat].push(it); });
   const sorted=Object.keys(groups).sort((a,b)=>(CATS[a]?.aisle||9)-(CATS[b]?.aisle||9));
   area.innerHTML=sorted.map(cat=>{
     const label=CATS[cat]?.label||'📦 Otros';
@@ -1469,10 +1519,11 @@ function renderWeeklyList(){
   }).join('');
 }
 
-function removeFromWeekly(id, e){
+async function removeFromWeekly(id, e){
   if(e)e.stopPropagation();
-  const items=getWeeklyTemplate().filter(it=>it.id!==id);
+  const items=(await loadWeeklyTemplateFromIDB()).filter(it=>it.id!==id);
   saveWeeklyTemplate(items);
+  _weeklySnapCache=items;
   renderWeeklyList();
   toast('Eliminado de la plantilla');
 }
@@ -1496,25 +1547,27 @@ function initWeeklyCatButtons(){
 }
 function selectWeeklyCat(k){weeklySelectedCat=k;initWeeklyCatButtons()}
 
-function addToWeekly(){
+async function addToWeekly(){
   const ni=document.getElementById('weekly-item-name'),qi=document.getElementById('weekly-item-qty');
   const name=ni.value.trim().slice(0,120);if(!name)return;
   const cat=weeklySelectedCat||guessCat(name);
-  const items=getWeeklyTemplate();
+  const items=await loadWeeklyTemplateFromIDB();
   if(items.find(it=>it.name.toLowerCase()===name.toLowerCase())){toast('Ya está en la plantilla');return}
   items.push({id:crypto.randomUUID(),name,quantity:qi.value.trim()||null,category:cat});
   saveWeeklyTemplate(items);
+  _weeklySnapCache=items;
   ni.value='';qi.value='';weeklySelectedCat='otros';initWeeklyCatButtons();
   closeWeeklyAddModal();
   renderWeeklyList();
   toast('Añadido a la plantilla ✓');
 }
 
-function quickAddToWeekly(name){
-  const items=getWeeklyTemplate();
+async function quickAddToWeekly(name){
+  const items=await loadWeeklyTemplateFromIDB();
   if(items.find(it=>it.name.toLowerCase()===name.toLowerCase()))return;
   items.push({id:crypto.randomUUID(),name,quantity:null,category:guessCat(name)});
   saveWeeklyTemplate(items);
+  _weeklySnapCache=items;
   renderWeeklyList();
   toast(`${name} añadido ✓`);
 }
@@ -1532,9 +1585,10 @@ function autoAddToWeekly(name, qty, category){
 let weeklyPickSource='editor'; // 'editor' | 'buyer'
 let weeklyPickSelected=new Set();
 
-function openWeeklyPickScreen(source){
-  const tpl=getWeeklyTemplate();
+async function openWeeklyPickScreen(source){
+  const tpl=await loadWeeklyTemplateFromIDB();
   if(!tpl.length){toast('La plantilla está vacía. Añade productos primero.');return}
+  _weeklySnapCache=tpl;
   weeklyPickSource=source||'editor';
   weeklyPickSelected=new Set();
   renderWeeklyPickList();
@@ -1542,7 +1596,7 @@ function openWeeklyPickScreen(source){
 }
 
 function renderWeeklyPickList(){
-  const tpl=getWeeklyTemplate();
+  const tpl=getWeeklyTemplate(); // usa _weeklySnapCache (ya cargado por openWeeklyPickScreen)
   const list=document.getElementById('weekly-pick-list');
   const confirmBtn=document.getElementById('wpi-confirm-btn');
   const selCount=document.getElementById('wpi-selected-count');
@@ -1596,7 +1650,7 @@ function updateWeeklyPickCount(){
 }
 
 function toggleSelectAllWeekly(){
-  const tpl=getWeeklyTemplate();
+  const tpl=getWeeklyTemplate(); // usa _weeklySnapCache
   const allSelected=weeklyPickSelected.size===tpl.length;
   weeklyPickSelected=allSelected?new Set():new Set(tpl.map(it=>it.id));
   renderWeeklyPickList();
@@ -1608,9 +1662,10 @@ async function confirmWeeklyPick(){
   const tpl=getWeeklyTemplate();
   const selected=tpl.filter(it=>weeklyPickSelected.has(it.id));
 
-  // No duplicar los que ya están en la lista
-  const cur=items.map(i=>i.name.toLowerCase());
-  const toAdd=selected.filter(it=>!cur.includes(it.name.toLowerCase())).map(it=>({
+  // Añadir TODOS los seleccionados — siempre con ID nuevo
+  // Si el producto ya está en la lista activa (sin comprar), se añade igualmente
+  // porque el usuario puede querer comprarlo por segunda vez esta semana
+  const toAdd=selected.map(it=>({
     id:crypto.randomUUID(),
     family_id:currentFamily.id,
     list_id:currentListId,
@@ -1624,7 +1679,7 @@ async function confirmWeeklyPick(){
     added_by_email:currentUser?.email
   }));
 
-  if(!toAdd.length){toast('Esos productos ya están en la lista');return}
+  if(!toAdd.length){toast('Selecciona al menos un producto');return}
 
   items.push(...toAdd);
   renderItems();
@@ -1654,12 +1709,11 @@ async function confirmWeeklyPick(){
 }
 
 // Renderizar el selector de listas del comprador con opción de plantilla
-function renderBuyerPickList(){
+async function renderBuyerPickList(){
   const container=document.getElementById('buyer-pick-list');
-  const tpl=getWeeklyTemplate();
+  const tpl=await loadWeeklyTemplateFromIDB();
+  _weeklySnapCache=tpl;
   let html='';
-
-  // Si hay plantilla, mostrar acceso destacado arriba
   if(tpl.length){
     html+=`<div class="buyer-weekly-card" onclick="openWeeklyPickScreen('buyer')">
       <div class="buyer-weekly-icon">📋</div>
@@ -1671,8 +1725,6 @@ function renderBuyerPickList(){
     </div>
     <div class="buyer-weekly-divider">o elige una lista existente</div>`;
   }
-
-  // Listas normales
   if(!lists.length){html+='<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">Sin listas</div></div>';container.innerHTML=html;return}
   lists.forEach(l=>{
     const pending=items.filter(i=>i.list_id===l.id&&!i.checked).length;
@@ -2329,10 +2381,10 @@ async function repeatList(id){
   if(isOnline){try{await sb.from('items').insert(toAdd)}catch(e){await sb.from('items').insert(toAdd.map(i=>({...i,list_id:undefined}))).catch(()=>{})}}
 }
 
-function importHistoryToWeekly(id){
+async function importHistoryToWeekly(id){
   const entry=historyData.find(h=>h.id===id);if(!entry)return;
   const raw=JSON.parse(entry.items_snapshot||'[]');if(!raw.length)return;
-  const tpl=getWeeklyTemplate();
+  const tpl=await loadWeeklyTemplateFromIDB();
   const existing=tpl.map(it=>it.name.toLowerCase());
   let added=0;
   raw.forEach(r=>{
@@ -2347,6 +2399,7 @@ function importHistoryToWeekly(id){
   });
   if(!added){toast('Todos ya están en la plantilla');return}
   saveWeeklyTemplate(tpl);
+  _weeklySnapCache=tpl;
   toast(`${added} producto${added!==1?'s':''} añadido${added!==1?'s':''} a la plantilla ✓`);
 }
 
